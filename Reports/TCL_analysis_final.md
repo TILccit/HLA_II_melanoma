@@ -118,13 +118,13 @@ HLAII_genes <- unique(c("CIITA", HLA_DR_genes, HLA_DP_genes, HLA_DQ_genes))
 combined_clustering <- perform_cluster_analysis(combined_vst,HLAII_genes, annotation = "Dataset",perplexity = 30, clusters = 4)
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/clustering pre-batch correction-1.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/clustering pre-batch correction-1.png" width="100%" />
 
 ``` r
 combined_clustering$tSNE_plot
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/clustering pre-batch correction-2.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/clustering pre-batch correction-2.png" width="100%" />
 
 Dataset information+clustering was included in the DeSeq formula to
 address the effects of the variables. In the end, we create a heatmap to
@@ -191,7 +191,7 @@ ggplot(combined_results_unfilter_no_HLA, aes(x = log2FoldChange, y = -log10(padj
   scale_color_manual(values = c("grey", "red"))
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/volcano plot-1.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/volcano plot-1.png" width="100%" />
 
 ``` r
 #volcano plot with HLA-II genes
@@ -214,7 +214,7 @@ ggplot(combined_results_unfilter, aes(x = log2FoldChange, y = -log10(padj))) +
   scale_color_manual(values = c("grey", "red"))
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/volcano plot-2.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/volcano plot-2.png" width="100%" />
 
 ``` r
 diff_expr_genes <- combined_results_unfilter_no_HLA %>% filter(padj < 0.01 & abs(log2FoldChange) > 2 &  abs(baseMean) >300) %>%
@@ -272,7 +272,7 @@ ggplot(subset(gsea_results_plot@result,p.adjust<0.01), aes(x = reorder(ID, NES),
   theme(axis.text.y = element_text(size = 10, face = "bold"))  
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/GSEA-1.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/GSEA-1.png" width="100%" />
 
 ``` r
 ggplot(gsea_results_plot@result, aes(x = NES, y = -log10(p.adjust))) +
@@ -295,7 +295,7 @@ ggplot(gsea_results_plot@result, aes(x = NES, y = -log10(p.adjust))) +
   scale_color_manual(values = c("grey", "red"))
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/GSEA-2.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/GSEA-2.png" width="100%" />
 
 ## PROGENY and Dorothea
 
@@ -330,13 +330,13 @@ ggplot(sig, aes(x = reorder(Pathway, logFC), y = logFC, fill = logFC > 0)) +
   labs(x = "Pathway", y = "Activity (logFC)", title = "PROGENy pathway activity: HLA+ vs HLA−")
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/unnamed-chunk-1-1.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/unnamed-chunk-1-1.png" width="100%" />
 
 The GSEA analysis shows that the HLA-II positive cell lines exhibit
 signs of dedifferentiation, associated with upregulation of inflammatory
 response markers
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/dotplot and GSEA plot-1.png" width="100%" /><img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/dotplot and GSEA plot-2.png" width="100%" /><img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/dotplot and GSEA plot-3.png" width="100%" /><img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/dotplot and GSEA plot-4.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/dotplot and GSEA plot-1.png" width="100%" /><img src="TCL_analysis_final_files/figure-gfm/dotplot and GSEA plot-2.png" width="100%" /><img src="TCL_analysis_final_files/figure-gfm/dotplot and GSEA plot-3.png" width="100%" /><img src="TCL_analysis_final_files/figure-gfm/dotplot and GSEA plot-4.png" width="100%" />
 
 # Dedifferentiation and HLA-II positivity
 
@@ -349,13 +349,13 @@ enrichment of the neural_crest-like phenotype, with a negative
 enrichment for the Melanocytic phenotype, compatible with what has been
 observed so far.
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/multi-stage differentiation subtypes-1.png" width="100%" /><img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/multi-stage differentiation subtypes-2.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/multi-stage differentiation subtypes-1.png" width="100%" /><img src="TCL_analysis_final_files/figure-gfm/multi-stage differentiation subtypes-2.png" width="100%" />
 
 ## Testing signature by Kim et al., JCI 2021
 
 As HLA-II follows dedifferentiation, how well is this recapitulated by
 the signature in Kim et al, JCI 2021?
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/Testing Kim et al signature-1.png" width="100%" /><img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/Testing Kim et al signature-2.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/Testing Kim et al signature-1.png" width="100%" /><img src="TCL_analysis_final_files/figure-gfm/Testing Kim et al signature-2.png" width="100%" />
 
 Finally, we show that the HLA-II CONST+ phenotype overlaps with the
 Neural Crest-like phenotype
@@ -426,7 +426,7 @@ undiff <- ggscatter(x = "CIITA_counts",y =  "undiff_score",
 ggarrange(mel,trans, neur,undiff)
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/unnamed-chunk-2-1.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/unnamed-chunk-2-1.png" width="100%" />
 
 ## Undifferentiated TCLs and HLA-II suppression
 
@@ -537,7 +537,7 @@ ggplot(combined_md_new, aes(x = IFNG_score, y = HLAII_score, colour = Tsoi)) +
   )
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/State-dependent coupling between IFN activity and HLA-II-1.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/State-dependent coupling between IFN activity and HLA-II-1.png" width="100%" />
 
 ## Inflammatory marker upregulation in HLA-II positive TCLs
 
@@ -587,7 +587,7 @@ ggplot(cor_nc_df, aes(x = reorder(pathway, r), y = r)) +
   theme_bw()
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/potential inflammatory drivers p-1.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/potential inflammatory drivers p-1.png" width="100%" />
 
 ``` r
 fit <- lm(
@@ -633,7 +633,7 @@ p_coef <- ggplot(coef_df, aes(x = estimate, y = term)) +
 p_coef
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/potential inflammatory drivers p-2.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/potential inflammatory drivers p-2.png" width="100%" />
 
 # Differential HLA-II isotype expression
 
@@ -653,7 +653,7 @@ create_violin_plot_compare_genes_vst(
                                                                       axis.text.x = element_text(size = 15, face = "bold"))
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/HLA isotype comparison-1.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/HLA isotype comparison-1.png" width="100%" />
 
 (Not included) Code used to generate the genes used for string analysis
 
@@ -714,7 +714,7 @@ ggplot(undiff_results_filter, aes(x = log2FoldChange, y = -log10(padj))) +
   scale_color_manual(values = c("grey", "red"))
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/analyses without undiff melanoma to exclude confounding due to diff status-1.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/analyses without undiff melanoma to exclude confounding due to diff status-1.png" width="100%" />
 
 ``` r
 undiff_results_filter_no_HLA <- as.data.frame(results(undiff_dds, name = "KNN_cluster_HLA_high_vs_HLA_low",cooksCutoff = T)) %>% 
@@ -740,7 +740,7 @@ ggplot(undiff_results_filter_no_HLA, aes(x = log2FoldChange, y = -log10(padj))) 
   scale_color_manual(values = c("grey", "red"))
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/analyses without undiff melanoma to exclude confounding due to diff status-2.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/analyses without undiff melanoma to exclude confounding due to diff status-2.png" width="100%" />
 
 ## DE genes between HLA-II CONST+ and undifferentiated HLA-low
 
@@ -776,7 +776,7 @@ ggplot(undiff_results_und_filter, aes(x = log2FoldChange, y = -log10(padj))) +
   scale_color_manual(values = c("grey", "red"))
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/DE HLA-II const+ and undiff HLA-low-1.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/DE HLA-II const+ and undiff HLA-low-1.png" width="100%" />
 
 ``` r
 undiff_results_und_filter_no_HLA <- as.data.frame(results(undiff_dds_undiff, name = "KNN_cluster_HLA_high_vs_HLA_low",cooksCutoff = T)) %>% 
@@ -802,7 +802,7 @@ ggplot(undiff_results_und_filter_no_HLA, aes(x = log2FoldChange, y = -log10(padj
   scale_color_manual(values = c("grey", "red"))
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/DE HLA-II const+ and undiff HLA-low-2.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/DE HLA-II const+ and undiff HLA-low-2.png" width="100%" />
 
 ## GSEA
 
@@ -841,7 +841,7 @@ ggplot(subset(gsea_results_melan@result,p.adjust<0.05), aes(x = reorder(ID, NES)
   theme(axis.text.y = element_text(size = 10, face = "bold"))  
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/GSEA on undiff dds-1.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/GSEA on undiff dds-1.png" width="100%" />
 
 ``` r
 ggplot(gsea_results_melan@result, aes(x = NES, y = -log10(p.adjust))) +
@@ -864,7 +864,7 @@ ggplot(gsea_results_melan@result, aes(x = NES, y = -log10(p.adjust))) +
   scale_color_manual(values = c("grey", "red"))
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/GSEA on undiff dds-2.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/GSEA on undiff dds-2.png" width="100%" />
 
 ``` r
 gene_list_undiff <- undiff_results_und_filter_no_HLA$log2FoldChange
@@ -899,7 +899,7 @@ ggplot(subset(gsea_results_undiff@result,p.adjust<0.05), aes(x = reorder(ID, NES
   theme(axis.text.y = element_text(size = 10, face = "bold"))  
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/GSEA on undiff dds-3.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/GSEA on undiff dds-3.png" width="100%" />
 
 ``` r
 ggplot(gsea_results_undiff@result, aes(x = NES, y = -log10(p.adjust))) +
@@ -922,7 +922,7 @@ ggplot(gsea_results_undiff@result, aes(x = NES, y = -log10(p.adjust))) +
   scale_color_manual(values = c("grey", "red"))
 ```
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/GSEA on undiff dds-4.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/GSEA on undiff dds-4.png" width="100%" />
 
 ## DE of specific inflammatory markers
 
@@ -932,4 +932,4 @@ inflammatory responses. Our results show that HLA-II positive melanomas
 have a constitutive activation of NFKB1, probably driving both
 dedifferentiation and CIITA activation
 
-<img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-1.png" width="100%" /><img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-2.png" width="100%" /><img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-3.png" width="100%" /><img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-4.png" width="100%" /><img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-5.png" width="100%" /><img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-6.png" width="100%" /><img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-7.png" width="100%" /><img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-8.png" width="100%" /><img src="E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-9.png" width="100%" />
+<img src="TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-1.png" width="100%" /><img src="TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-2.png" width="100%" /><img src="TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-3.png" width="100%" /><img src="TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-4.png" width="100%" /><img src="TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-5.png" width="100%" /><img src="TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-6.png" width="100%" /><img src="TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-7.png" width="100%" /><img src="TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-8.png" width="100%" /><img src="TCL_analysis_final_files/figure-gfm/violin plots on undiff - combined dds-9.png" width="100%" />

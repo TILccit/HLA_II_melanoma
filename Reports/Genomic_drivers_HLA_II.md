@@ -1,20 +1,25 @@
-Genomic_drivers_HLA_II
-================
-Mario Presti
-First created on November 2024 Updated on 01 July 2026
+---
+editor_options: 
+  markdown: 
+    wrap: 72
+---
 
-- [Genomic differences between HLA+ and HLA-
-  TCLs](#genomic-differences-between-hla-and-hla--tcls)
-- [TMB differences in HLA+ and HLA-
-  TCLs](#tmb-differences-in-hla-and-hla--tcls)
-- [Checking the distribution of NRAS and BRAF
-  muts](#checking-the-distribution-of-nras-and-braf-muts)
-- [Genomic signatures related to HLA-II
-  positivity](#genomic-signatures-related-to-hla-ii-positivity)
-- [Duplication of specific genes and HLA
-  positivity](#duplication-of-specific-genes-and-hla-positivity)
+# Genomic_drivers_HLA_II
 
-# Genomic differences between HLA+ and HLA- TCLs
+Mario Presti First created on November 2024 Updated on 01 July 2026
+
+-   [Genomic differences between HLA+ and HLA-
+    TCLs](#genomic-differences-between-hla-and-hla--tcls)
+-   [TMB differences in HLA+ and HLA-
+    TCLs](#tmb-differences-in-hla-and-hla--tcls)
+-   [Checking the distribution of NRAS and BRAF
+    muts](#checking-the-distribution-of-nras-and-braf-muts)
+-   [Genomic signatures related to HLA-II
+    positivity](#genomic-signatures-related-to-hla-ii-positivity)
+-   [Duplication of specific genes and HLA
+    positivity](#duplication-of-specific-genes-and-hla-positivity)
+
+# Genomic differences between HLA+ and HLA- TCLs {#genomic-differences-between-hla-and-hla--tcls}
 
 ``` r
 #trying to identify a mutational driver of CIITA activation
@@ -28,55 +33,63 @@ coding_classes <- c(
 mutations <- read.maf(maf = "public/depmap_data/OmicsSomaticMutationsMAFProfile.maf",vc_nonSyn = coding_classes)
 ```
 
-    ## -Reading
-    ## -Validating
-    ## --Removed 4 duplicated variants
-    ## -Silent variants: 38896 
-    ## -Summarizing
-    ## --Possible FLAGS among top ten genes:
-    ##   TTN
-    ##   MUC16
-    ##   AHNAK2
-    ##   OBSCN
-    ## -Processing clinical data
-    ## --Missing clinical data
-    ## -Finished in 9.840s elapsed (8.890s cpu)
+```         
+## -Reading
+## -Validating
+## --Removed 4 duplicated variants
+## -Silent variants: 38896 
+## -Summarizing
+## --Possible FLAGS among top ten genes:
+##   TTN
+##   MUC16
+##   AHNAK2
+##   OBSCN
+## -Processing clinical data
+## --Missing clinical data
+## -Finished in 9.840s elapsed (8.890s cpu)
+```
 
 ``` r
 mutations_HLAsamples_high <- subsetMaf(mutations, tsb = c(profile_id_wgs_high$ProfileID))
 ```
 
-    ## --Possible FLAGS among top ten genes:
-    ##   TTN
-    ##   MUC16
-    ## -Processing clinical data
+```         
+## --Possible FLAGS among top ten genes:
+##   TTN
+##   MUC16
+## -Processing clinical data
+```
 
 ``` r
 mutations_HLAsamples_low <- subsetMaf(mutations, tsb = c(profile_id_wgs_low$ProfileID))
 ```
 
-    ## --Possible FLAGS among top ten genes:
-    ##   TTN
-    ##   MUC16
-    ## -Processing clinical data
+```         
+## --Possible FLAGS among top ten genes:
+##   TTN
+##   MUC16
+## -Processing clinical data
+```
 
 ``` r
 compar <- mafCompare(m1 = mutations_HLAsamples_high, m2 = mutations_HLAsamples_low, m1Name = 'HLA+', m2Name = 'HLA-', minMut = 5)
 ```
 
-# TMB differences in HLA+ and HLA- TCLs
+# TMB differences in HLA+ and HLA- TCLs {#tmb-differences-in-hla-and-hla--tcls}
 
 ``` r
 capture_mb <- 30
 tmb_high <- tmb(mutations_HLAsamples_high, captureSize = 30)
 ```
 
-    ## Filtering CNV events (if any..)
+```         
+## Filtering CNV events (if any..)
 
-    ## --Possible FLAGS among top ten genes:
-    ##   TTN
-    ##   MUC16
-    ## -Processing clinical data
+## --Possible FLAGS among top ten genes:
+##   TTN
+##   MUC16
+## -Processing clinical data
+```
 
 ![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-2-1.png)<!-- -->
 
@@ -84,12 +97,14 @@ tmb_high <- tmb(mutations_HLAsamples_high, captureSize = 30)
 tmb_low  <- tmb(mutations_HLAsamples_low, captureSize = 30)
 ```
 
-    ## Filtering CNV events (if any..)
+```         
+## Filtering CNV events (if any..)
 
-    ## --Possible FLAGS among top ten genes:
-    ##   TTN
-    ##   MUC16
-    ## -Processing clinical data
+## --Possible FLAGS among top ten genes:
+##   TTN
+##   MUC16
+## -Processing clinical data
+```
 
 ![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-2-2.png)<!-- -->
 
@@ -109,9 +124,9 @@ ggplot(df, aes(x = group, y = total_perMB_log)) +
 
 ![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-2-3.png)<!-- -->
 
-# Checking the distribution of NRAS and BRAF muts
+# Checking the distribution of NRAS and BRAF muts {#checking-the-distribution-of-nras-and-braf-muts}
 
-\##NRAS
+##NRAS
 
 ``` r
 gene_of_interest <- "NRAS"  
@@ -183,7 +198,7 @@ ggplot(rate_dt_NRAS, aes(x = HLA_status, y = MutRate, fill = HLA_status)) +
 
 ![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-3-1.png)<!-- -->
 
-\##BRAF
+##BRAF
 
 ``` r
 gene_of_interest <- "BRAF"  
@@ -252,7 +267,7 @@ ggplot(rate_dt, aes(x = HLA_status, y = MutRate, fill = HLA_status)) +
 
 ![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-4-1.png)<!-- -->
 
-# Genomic signatures related to HLA-II positivity
+# Genomic signatures related to HLA-II positivity {#genomic-signatures-related-to-hla-ii-positivity}
 
 ``` r
 signatures <- fread(paste0("public/depmap_data/OmicsSignatures.csv"))
@@ -282,14 +297,16 @@ ggplot(signatures_HLA, aes(x = HLA_status, y = CIN, fill = HLA_status)) +
 )
 ```
 
-    ## Warning: Removed 11 rows containing non-finite outside the scale range
-    ## (`stat_ydensity()`).
+```         
+## Warning: Removed 11 rows containing non-finite outside the scale range
+## (`stat_ydensity()`).
 
-    ## Warning: Removed 11 rows containing non-finite outside the scale range
-    ## (`stat_signif()`).
+## Warning: Removed 11 rows containing non-finite outside the scale range
+## (`stat_signif()`).
 
-    ## Warning: Removed 11 rows containing missing values or values outside the scale range
-    ## (`geom_point()`).
+## Warning: Removed 11 rows containing missing values or values outside the scale range
+## (`geom_point()`).
+```
 
 ![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-5-1.png)<!-- -->
 
@@ -339,18 +356,20 @@ ggplot(signatures_HLA, aes(x = HLA_status, y = LoHFraction, fill = HLA_status)) 
 )
 ```
 
-    ## Warning: Removed 11 rows containing non-finite outside the scale range
-    ## (`stat_ydensity()`).
+```         
+## Warning: Removed 11 rows containing non-finite outside the scale range
+## (`stat_ydensity()`).
 
-    ## Warning: Removed 11 rows containing non-finite outside the scale range
-    ## (`stat_signif()`).
+## Warning: Removed 11 rows containing non-finite outside the scale range
+## (`stat_signif()`).
 
-    ## Warning: Removed 11 rows containing missing values or values outside the scale range
-    ## (`geom_point()`).
+## Warning: Removed 11 rows containing missing values or values outside the scale range
+## (`geom_point()`).
+```
 
 ![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-5-3.png)<!-- -->
 
-# Duplication of specific genes and HLA positivity
+# Duplication of specific genes and HLA positivity {#duplication-of-specific-genes-and-hla-positivity}
 
 ``` r
 #could it be linked to duplication of specific genes?
