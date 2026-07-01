@@ -91,7 +91,7 @@ tmb_high <- tmb(mutations_HLAsamples_high, captureSize = 30)
 ## -Processing clinical data
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-2-1.png)<!-- -->
+![](Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-2-1.png)<!-- -->
 
 ``` r
 tmb_low  <- tmb(mutations_HLAsamples_low, captureSize = 30)
@@ -106,7 +106,7 @@ tmb_low  <- tmb(mutations_HLAsamples_low, captureSize = 30)
 ## -Processing clinical data
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-2-2.png)<!-- -->
+![](Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-2-2.png)<!-- -->
 
 ``` r
 # 8. compare distributions
@@ -122,7 +122,7 @@ ggplot(df, aes(x = group, y = total_perMB_log)) +
   theme_minimal()
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-2-3.png)<!-- -->
+![](Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-2-3.png)<!-- -->
 
 # Checking the distribution of NRAS and BRAF muts {#checking-the-distribution-of-nras-and-braf-muts}
 
@@ -196,7 +196,7 @@ ggplot(rate_dt_NRAS, aes(x = HLA_status, y = MutRate, fill = HLA_status)) +
   theme(legend.position = "none")
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-3-1.png)<!-- -->
+![](Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-3-1.png)<!-- -->
 
 ##BRAF
 
@@ -265,7 +265,7 @@ ggplot(rate_dt, aes(x = HLA_status, y = MutRate, fill = HLA_status)) +
   theme(legend.position = "none")
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-4-1.png)<!-- -->
+![](Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-4-1.png)<!-- -->
 
 # Genomic signatures related to HLA-II positivity {#genomic-signatures-related-to-hla-ii-positivity}
 
@@ -308,7 +308,7 @@ ggplot(signatures_HLA, aes(x = HLA_status, y = CIN, fill = HLA_status)) +
 ## (`geom_point()`).
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-5-1.png)<!-- -->
+![](Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-5-1.png)<!-- -->
 
 ``` r
 ggplot(signatures_HLA, aes(x = HLA_status, y = MSIScore, fill = HLA_status)) +
@@ -332,7 +332,7 @@ ggplot(signatures_HLA, aes(x = HLA_status, y = MSIScore, fill = HLA_status)) +
 )
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-5-2.png)<!-- -->
+![](Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-5-2.png)<!-- -->
 
 ``` r
 ggplot(signatures_HLA, aes(x = HLA_status, y = LoHFraction, fill = HLA_status)) +
@@ -367,7 +367,7 @@ ggplot(signatures_HLA, aes(x = HLA_status, y = LoHFraction, fill = HLA_status)) 
 ## (`geom_point()`).
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-5-3.png)<!-- -->
+![](Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-5-3.png)<!-- -->
 
 # Duplication of specific genes and HLA positivity {#duplication-of-specific-genes-and-hla-positivity}
 
@@ -392,4 +392,4 @@ ggplot(gene_CNV, aes(x = HLA_class, y= !!col_name, fill = HLA_class)) +
   geom_boxplot()
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/reports/Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-6-1.png)<!-- -->
+![](Genomic_drivers_HLA_II_files/figure-gfm/unnamed-chunk-6-1.png)<!-- -->
