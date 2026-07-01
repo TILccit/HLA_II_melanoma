@@ -1,0 +1,30 @@
+### TIL data preparation
+load(file = "../controlled_data/TIL/deseq2.dds.RData")
+TIL_dds <- dds
+
+TIL_counts <- counts(TIL_dds)
+TIL_md <- as.data.frame(TIL_dds@colData)
+
+TIL_md$sample <- gsub("MM909_", "MM909", TIL_md$sample)
+TIL_md$Patient <- str_split_i(TIL_md$sample,"_",1)
+
+#filter out samples which are not baselines or not in the published data
+samplefilter <- read.xlsx("../controlled_data/TIL/published_data.xlsx")
+samplefilter <- samplefilter$Samplename
+#fix the MM1413 and 1414 names
+samplefilter <- gsub("MM1414_", "MM1414", samplefilter)
+samplefilter <- gsub("MM1413_", "MM1413", samplefilter)
+#some of the samples have to be hardcoded, as I set another name
+TIL_md$sample <- rownames(TIL_md)
+#append _T in all the 1414 and 1413
+TIL_md$sample_correct <- ifelse(grepl("1414|1413", TIL_md$sample),paste0(TIL_md$sample,"_T"),TIL_md$sample)
+TIL_md <- dplyr::filter(TIL_md, sample_correct %in% c(samplefilter, "MM909_11_before_TILs", "MM909_22_2_aftIPI_befTIL"))
+
+TIL_md_response <- read.xlsx("../controlled_data/TIL/TIL_clinical.xlsx")
+
+TIL_md_response$Patient <- trimws(paste0(TIL_md_response$Trial,gsub("M|MM", "", TIL_md_response$Patient)))
+
+TIL_md_full <- merge(TIL_md_response, TIL_md, by="Patient")
+
+rownames(TIL_md_full) <- TIL_md_full$sample
+TIL_counts_matr <- as.matrix(TIL_counts)

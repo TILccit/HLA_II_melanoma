@@ -1,0 +1,573 @@
+surv_analysis_tcga <- function(
+    project,
+    up_list,
+    down_list,
+    gdc_root = "E:/PhD_projects/MHCII_project/TCGA_all/GDCdata")
+ { 
+  suppressPackageStartupMessages({
+    library(TCGAbiolinks)
+    library(SummarizedExperiment)
+    library(edgeR)
+    library(AnnotationDbi)
+    library(org.Hs.eg.db)
+    library(singscore)
+    library(dplyr)
+    library(survival)
+  })
+  setwd("E:/PhD_projects/MHCII_project/Paper/Clean_scripts/")
+
+  query <- GDCquery(project = project,
+                  data.category = "Transcriptome Profiling",
+                  data.type     = "Gene Expression Quantification",
+                  workflow.type = "STAR - Counts")
+  if(dir.exists(file.path("GDCdata", project))){
+    data_se <- GDCprepare(
+      query, 
+      directory = "GDCdata"
+    )
+  } else {
+    GDCdownload(query)
+    data_se <- GDCprepare(query)
+  }
+  
+  expr  <- assay(data_se)               # sample × gene counts
+  clin  <- colData(data_se)  
+  counts = expr
+  
+  # Remove Ensembl version suffix (e.g. ENSG000001234.5 → ENSG000001234)
+  rownames(counts) <- sub("\\..*$", "", rownames(counts))
+  
+  # 4) Retrieve gene lengths (median transcript length per gene) from Ensembl
+  ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl")
+  geneAnnot <- getBM(
+    attributes = c("ensembl_gene_id", "transcript_length"),
+    filters    = "ensembl_gene_id",
+    values     = rownames(counts),
+    mart       = ensembl
+    )
+  # compute median transcript length
+  library(dplyr)
+  geneLengths <- geneAnnot %>%
+    group_by(ensembl_gene_id) %>%
+    summarise(median_length = median(transcript_length)) %>%
+    ungroup()
+  
+  # match lengths to your count matrix
+  length.kb <- geneLengths$median_length[match(rownames(counts),
+                                               geneLengths$ensembl_gene_id)] / 1000
+  
+  # 5) Create DGEList and calculate normalization factors
+  dge <- DGEList(counts = counts, genes = data.frame(Length = length.kb))
+  dge <- calcNormFactors(dge)  # TMM normalization
+  
+  # 6) Compute FPKM
+  fpkm.mat <- rpkm(dge,
+                 gene.length        = dge$genes$Length,
+                 normalized.lib.sizes = TRUE)
+  
+  library(org.Hs.eg.db)
+  library(AnnotationDbi)
+
+
+  # 2. Map IDs
+  hugo <- mapIds(
+    org.Hs.eg.db,
+    keys      = rownames(fpkm.mat),
+    column    = "SYMBOL",
+    keytype   = "ENSEMBL",
+    multiVals = "first"
+  )
+
+  # 3. Subset out NAs and rename
+  keep <- !is.na(hugo)
+  expr_hugo_rcc <- fpkm.mat[keep, , drop=FALSE]
+  rownames(expr_hugo_rcc) <- hugo[keep]
+
+  rank_data <- rankGenes(expr_hugo_rcc)
+
+  md <- colData(data_se)
+  md$sample <- rownames(md)
+  md <- merge(x = clinical_data,y = md, by.x = "bcr_patient_barcode", by.y = "patient")
+  # compute simple singscore
+  scores <- simpleScore(rank_data,
+                        upSet   = up_list,
+                        downSet = down_list)
+  #rownames(scores) <- gsub(x= rownames(scores), pattern = "\\.", replacement = "-")
+  scores$sample <- rownames(scores)
+  scores <- subset(scores, sample %in% md$sample)
+  md <- subset(md, sample %in% scores$sample)
+  scores <- scores[order(scores$sample, md$sample),]
+
+  # assuming rownames are your sample IDs:
+  md$signature_score <- scores$TotalScore[
+    match(md$sample, scores$sample)
+  ]
+
+  # Check they all matched:
+  stopifnot(!any(is.na(md$signature_score)))
+
+  #####Administrative censoring KIRC######
+  #administrative censoring at 15 years
+  md$OS.years <- md$OS.time/365
+  md$OS.years_censored   <- pmin(md$OS.years, 15)
+  md$OS_censored <- ifelse(md$OS.years > 15, 0, md$OS)
+  #Administrative censoring at 60 months
+  md$PFI.years <- md$PFI.time/365
+  md$PFI.years_censored   <- pmin(md$PFI.years, 15)
+  md$PFI_censored <- ifelse(md$PFI.years > 15, 0, md$PFI)
+
+  cat(paste0("Administrative censoring: ", round((length(which(md$OS.years > 15))/length(md$OS.years))*100), "%"))
+
+  message("Running univariate analysis for ", project)
+  # 3) Define your group (you already have this)
+  md <- as.data.frame(md) %>%
+   dplyr::mutate(group = if_else(signature_score >= 
+                                   quantile(signature_score, 0.75),
+                                  "High","Low"))
+  md$group <- factor(md$group, levels = c("Low", "High"))
+  # 4) Fit the survival model in one go, using the data frame
+  fit <- survfit(
+    Surv(OS.years_censored, OS_censored) ~ group,
+   data = md
+  )
+
+  # 5) Plot
+  surv_plot <-ggsurvplot(
+    fit,
+    data       = md,
+    pval       = TRUE,
+    risk.table = TRUE
+  )
+
+  cox <- coxph(Surv(OS.years_censored, OS_censored) ~ group, data = md)
+  s   <- summary(cox)
+  
+  out <- data.frame(
+    project = project,
+    n       = nrow(md),
+    events  = sum(md$OS_censored, na.rm = TRUE),
+    HR      = unname(s$coef["groupHigh", "exp(coef)"]),
+    LCL     = unname(s$conf.int["groupHigh", "lower .95"]),
+    UCL     = unname(s$conf.int["groupHigh", "upper .95"]),
+    p       = unname(s$coef["groupHigh", "Pr(>|z|)"])
+  )
+  
+  return(list(
+    project = project,
+    meta    = md,
+    cox     = out,
+    plot    = surv_plot
+  ))
+  
+}
+
+projects <- paste0("TCGA-", c(
+  "ACC","BLCA","BRCA","CESC","CHOL","COAD","DLBC","ESCA","GBM","HNSC",
+  "KICH","KIRC","KIRP","LAML","LGG","LIHC","LUAD","LUSC","MESO","OV",
+  "PAAD","PCPG","PRAD","READ","SARC","SKCM","STAD","TGCT","THCA","THYM",
+  "UCEC","UCS","UVM"
+))
+length(projects)
+
+run_one <- function(prj) {
+  tryCatch(
+    surv_analysis_tcga(
+      project       = prj,
+      up_list       = up_list,
+      down_list     = down_list),
+    error = function(e) e
+  )
+}
+
+results_list <- lapply(projects, run_one)
+names(results_list) <- projects
+
+failed <- names(results_list)[vapply(results_list, inherits, logical(1), "error")]
+failed
+
+cox_tbl <- do.call(rbind, lapply(results_list, function(x) {
+  if (inherits(x, "error")) return(NULL)
+  x$cox
+}))
+
+cox_tbl$FDR <- p.adjust(cox_tbl$p, method = "BH")
+cox_tbl <- cox_tbl[order(cox_tbl$FDR, cox_tbl$p), ]
+cox_tbl
+
+plot_df <- cox_tbl %>%
+  arrange(HR) %>%
+  mutate(project = factor(project, levels = project),
+         label = sprintf("%s  (n=%d, events=%d)", project, n, events),
+         highlight = (project == "TCGA-SKCM"))
+
+eligible <- cox_tbl %>%
+  dplyr::filter(n >= 200, events >= 100)   # your rule
+
+eligible <- eligible %>%
+  dplyr::mutate(FDR = p.adjust(p, method = "BH"))
+
+cox_tbl2 <- eligible %>%
+  dplyr::mutate(
+    label  = sprintf("%s (n=%d, events=%d)", project, n, events),
+    sig_fdr = FDR < 0.05
+  ) %>%
+  dplyr::arrange(HR) %>%
+  dplyr::mutate(label = factor(label, levels = label))
+
+#vertical forest plot
+ggplot(cox_tbl2, aes(x = HR, y = label)) +
+  geom_vline(xintercept = 1, linetype = 2) +
+  geom_errorbarh(aes(xmin = LCL, xmax = UCL, alpha = sig_fdr), height = 0.2) +
+  geom_point(aes(alpha = sig_fdr, shape = sig_fdr), size = 2) +
+  geom_text(
+    aes(label = sprintf("q=%.3g", FDR)),
+    x = 3.2, hjust = 1, size = 3
+  ) +
+  scale_x_log10() +
+  scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.35)) +
+  scale_shape_manual(values = c(`TRUE` = 19, `FALSE` = 1)) +
+  labs(x = "Hazard ratio per 1 SD score increase (log scale)", y = NULL) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+#horizontal forest plot
+cox_tbl2$project <- gsub("TCGA-","",cox_tbl2$project)
+
+cox_tbl2p <- cox_tbl2 %>%
+  filter(is.finite(HR), HR > 0, is.finite(LCL), is.finite(UCL)) %>%
+  mutate(
+    # decreasing HR (largest first)
+    project = forcats::fct_reorder(project, HR, .desc = TRUE)
+  )
+
+ggplot(cox_tbl2p, aes(x = HR, y = project)) +
+  geom_vline(xintercept = 1, linetype = 2) +
+  geom_errorbarh(aes(alpha = sig_fdr,xmin = LCL, xmax = UCL), height = 0.2) +
+  geom_point(aes(alpha = sig_fdr, shape = sig_fdr), size = 2) +
+  geom_text(
+    aes(label = sprintf("q=%.3g", FDR)),
+    x = 3.2, hjust = 1, size = 3
+  ) +
+  scale_x_log10() +
+  labs(x = "Hazard ratio per 1 SD score increase (log scale)", y = NULL) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.35)) +
+  scale_shape_manual(values = c(`TRUE` = 19, `FALSE` = 1)) +
+  coord_flip()
+
+
+ggsave("E:/PhD_projects/MHCII_project/Paper/Figures/New_versions/Fig2D.svg", width = 6, height = 5)
+
+library(dplyr)
+
+library(dplyr)
+
+pick_first <- function(df, candidates) {
+  hit <- intersect(candidates, names(df))
+  if (length(hit) == 0) return(rep(NA, nrow(df)))
+  df[[hit[1]]]
+}
+
+as_num <- function(x) suppressWarnings(as.numeric(if (is.factor(x)) as.character(x) else x))
+as_int01 <- function(x) {
+  x <- if (is.factor(x)) as.character(x) else x
+  suppressWarnings(as.integer(x))
+}
+
+extract_minimal <- function(obj, project) {
+  if (inherits(obj, "error") || is.null(obj$meta)) return(NULL)
+  
+  md <- as.data.frame(obj$meta)
+  md[] <- lapply(md, function(x) if (is.factor(x)) as.character(x) else x)
+  
+  stage_vec <- pick_first(md, c("ajcc_clinical_stage", "ajcc_pathologic_tumor_stage"))
+  stage_vec <- as.character(stage_vec)  # force vector
+  
+  out <- data.frame(
+    project = project,
+    histology = sub("^TCGA-", "", project),
+    sample = pick_first(md, c("sample", "barcode", "submitter_id", "bcr_patient_barcode")),
+    signature_score = as_num(pick_first(md, c("signature_score", "score", "TotalScore"))),
+    age = as_num(pick_first(md, c("age_at_diagnosis"))),
+    sex = pick_first(md, "gender.x"),
+    stage = stage_vec,
+    time_days = as_num(pick_first(md, c("OS.years_censored", "os.time", "OS_time",
+                                        "days_to_death", "days_to_last_follow_up"))),
+    event = as_int01(pick_first(md, c("OS_censored", "os", "vital_status_event", "event"))),
+    stringsAsFactors = FALSE
+  )
+  
+  out <- out %>%
+    mutate(
+      stage_group = case_when(
+        stage %in% c("Stage 0", "I/II NOS", "Stage I","Stage IA","Stage IB",
+                     "Stage II","Stage IIA","Stage IIB","Stage IIC") ~ "0/I/II",
+        stage %in% c("Stage III","Stage IIIA","Stage IIIB","Stage IIIC") ~ "III",
+        stage == "Stage IV" ~ "IV",
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    filter(!is.na(sample), !is.na(signature_score), !is.na(time_days), !is.na(event)) %>%
+    mutate(
+      age_group = if_else(!is.na(age) & (age/365) < 40, "<40", "≥40"),
+      time_years = time_days / 365,
+      time_years_cens = pmin(time_years, 15),
+      event_cens = if_else(time_years > 15, 0L, event),
+      stage_group = factor(stage_group, levels = c("0/I/II","III","IV")),
+      age_group   = factor(age_group,   levels = c("<40","≥40"))
+    )
+  
+  out
+}
+
+
+minimal_all <- bind_rows(lapply(names(results_list), function(prj) {
+  extract_minimal(results_list[[prj]], prj)
+}))
+
+#test the interaction term
+
+fit0 <- coxph(Surv(time_years_cens, event_cens) ~ signature_score + strata(project) + age_group + sex + stage_group,
+              data = minimal_all)
+
+fit1 <- coxph(Surv(time_years_cens, event_cens) ~ signature_score * project + strata(project)  + age_group + sex + stage_group,
+              data = minimal_all)
+
+anova(fit0, fit1, test = "LRT")
+
+coefv <- coef(fit1)
+V <- vcov(fit1)
+
+# Identify interaction terms
+int_names <- grep("^signature_score:project", names(coefv), value = TRUE)
+
+# Extract project names from interaction term names
+proj_from_int <- sub("^signature_score:project", "", int_names)
+
+# Reference project (no interaction term)
+ref_proj <- levels(minimal_all$project)[1]  # should be "TCGA-SKCM" if releveled correctly
+
+# Function to compute HR/CI/p for beta_score + beta_int (or beta_score alone)
+get_effect <- function(proj, dat = minimal_all_filt) {
+  proj <- as.character(proj)
+  
+  d <- dat %>% dplyr::filter(project == proj)
+  if (nrow(d) == 0) {
+    return(tibble::tibble(project = proj, n = 0, events = 0,
+                          HR = NA_real_, se = NA_real_, z = NA_real_, p = NA_real_,
+                          error = "no rows in project"))
+  }
+  
+  # --- normalization step (within-project z-score) ---
+  mu <- mean(d$signature_score, na.rm = TRUE)
+  sdv <- stats::sd(d$signature_score, na.rm = TRUE)
+  if (!is.finite(sdv) || sdv == 0) {
+    return(tibble::tibble(project = proj, n = nrow(d),
+                          events = sum(d$event_cens == 1L, na.rm = TRUE),
+                          HR = NA_real_, se = NA_real_, z = NA_real_, p = NA_real_,
+                          error = "signature_score SD is 0/NA in this project"))
+  }
+  d <- d %>% dplyr::mutate(signature_z = (signature_score - mu) / sdv)
+  
+  # enforce complete-case for model variables
+  model_vars <- c("time_years_cens","event_cens","signature_z","age_group","sex","stage_group")
+  d_cc <- d %>% dplyr::filter(stats::complete.cases(dplyr::across(dplyr::all_of(model_vars))))
+  
+  n_cc <- nrow(d_cc)
+  events <- sum(d_cc$event_cens == 1L, na.rm = TRUE)
+  
+  if (n_cc == 0) {
+    return(tibble::tibble(project = proj, n = 0, events = 0,
+                          HR = NA_real_, se = NA_real_, z = NA_real_, p = NA_real_,
+                          error = "no complete-case observations"))
+  }
+  if (events < 5) {
+    return(tibble::tibble(project = proj, n = n_cc, events = events,
+                          HR = NA_real_, se = NA_real_, z = NA_real_, p = NA_real_,
+                          error = "too few events for multivariable Cox"))
+  }
+  
+  # drop covariates with no variation in this project
+  fml_terms <- c("signature_z")
+  if (dplyr::n_distinct(d_cc$age_group)   > 1) fml_terms <- c(fml_terms, "age_group")
+  if (dplyr::n_distinct(d_cc$sex)         > 1) fml_terms <- c(fml_terms, "sex")
+  if (dplyr::n_distinct(d_cc$stage_group) > 1) fml_terms <- c(fml_terms, "stage_group")
+  
+  fml <- as.formula(paste0(
+    "survival::Surv(time_years_cens, event_cens) ~ ",
+    paste(fml_terms, collapse = " + ")
+  ))
+  
+  tryCatch({
+    fit <- survival::coxph(fml, data = d_cc)
+    sm <- summary(fit)
+    
+    idx <- which(rownames(sm$coef) == "signature_z")
+    if (length(idx) != 1L) stop("signature_z term not found")
+    
+    tibble::tibble(
+      project = proj,
+      n = n_cc,
+      events = events,
+      HR = unname(sm$coef[idx, "exp(coef)"]),
+      se = unname(sm$coef[idx, "se(coef)"]),
+      z  = unname(sm$coef[idx, "z"]),
+      p  = unname(sm$coef[idx, "Pr(>|z|)"]),
+      error = NA_character_
+    )
+  }, error = function(e) {
+    tibble::tibble(
+      project = proj, n = n_cc, events = events,
+      HR = NA_real_, se = NA_real_, z = NA_real_, p = NA_real_,
+      error = paste0("coxph error: ", conditionMessage(e))
+    )
+  })
+}
+
+
+
+minimal_all <- minimal_all %>%
+  group_by(project) %>%
+  mutate(
+    n_project = n(),
+    events_project = sum(event_cens, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+minimal_all_filt <- minimal_all %>% filter(events_project > 100)
+
+minimal_all_filt$project <- as.factor(minimal_all_filt$project)
+projects_all <- levels(minimal_all_filt$project)
+
+cox_by_proj <- bind_rows(lapply(projects_all, get_effect)) %>%
+  mutate(FDR = p.adjust(p, method = "BH"))
+
+cox_by_proj %>%
+  summarise(
+    tested = n(),
+    n_FDR_lt_0.05 = sum(FDR < 0.05, na.rm = TRUE),
+    passing = paste(project[!is.na(FDR) & FDR < 0.05], collapse = ", ")
+  )
+
+plot_df <- cox_by_proj %>%
+  mutate(
+    label = sprintf("%s", project),
+    sig_fdr = FDR < 0.05
+  ) %>%
+  arrange(HR) %>%
+  mutate(label = factor(label, levels = label))
+
+plot_df2 <- plot_df %>%
+  dplyr::mutate(
+    # optional: shorten or wrap the label
+    label_short = gsub("TCGA-","",label)
+  )
+
+plot_df2p <- cox_by_proj %>%
+  mutate(
+    label_short = gsub("^TCGA-","", project),
+    sig_fdr = !is.na(FDR) & FDR < 0.05
+  ) %>%
+  # drop rows that can't be plotted on log scale
+  filter(is.finite(HR), HR > 0, is.finite(se), se >= 0) %>%
+  mutate(
+    lower = exp(log(HR) - 1.96 * se),
+    upper = exp(log(HR) + 1.96 * se)
+  ) %>%
+  filter(is.finite(lower), is.finite(upper), lower > 0, upper > 0) %>%
+  arrange(HR) %>%
+  mutate(label_short = factor(label_short, levels = rev(label_short)))
+
+
+ggplot(plot_df2p, aes(x = HR, y = label_short)) +
+  geom_vline(xintercept = 1, linetype = 2, linewidth = 0.6) +
+  geom_errorbarh(
+    aes(xmin = lower, xmax = upper, alpha = sig_fdr),
+    height = 0.25,
+    linewidth = 0.9
+  ) +
+  geom_point(aes(shape = sig_fdr, alpha = sig_fdr), size = 2.6) +
+  scale_x_log10() +
+  scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.35)) +
+  scale_shape_manual(values = c(`TRUE` = 19, `FALSE` = 1)) +
+  labs(x = "Multivariate Hazard ratio", y = NULL) +
+  theme_bw(base_size = 11) +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+    plot.margin = margin(5.5, 25, 5.5, 5.5)
+  ) +
+  coord_flip()
+
+ggsave("E:/PhD_projects/MHCII_project/Paper/Figures/New_versions/Figure2D.svg", width = 10, height = 5)
+
+#------------------------
+s <- summary(fit_int)
+
+# Interaction rows are the "difference vs reference (SKCM)"
+int_rows <- grep("^score_z:project", rownames(s$coef), value = TRUE)
+
+delta_tbl <- data.frame(
+  term   = int_rows,
+  project = sub("^score_z:project", "", int_rows),
+  delta_logHR = s$coef[int_rows, "coef"],
+  se          = s$coef[int_rows, "se(coef)"],
+  p           = s$coef[int_rows, "Pr(>|z|)"],
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    delta_HR = exp(delta_logHR),
+    LCL = exp(delta_logHR - 1.96*se),
+    UCL = exp(delta_logHR + 1.96*se),
+    FDR = p.adjust(p, method = "BH"),
+    sig_fdr = FDR < 0.05
+  )
+
+# Add SKCM as the 0-difference reference (optional to display)
+delta_tbl <- bind_rows(
+  data.frame(
+    term = NA, project = "TCGA-SKCM",
+    delta_logHR = 0, se = NA, p = NA,
+    delta_HR = 1, LCL = 1, UCL = 1,
+    FDR = NA, sig_fdr = TRUE
+  ),
+  delta_tbl
+)
+
+counts <- minimal_all %>%
+  distinct(project, n_project, events_project)
+
+delta_tbl <- delta_tbl %>%
+  left_join(counts, by = "project")
+
+delta_tbl_filt <- delta_tbl %>%
+  filter(n_project >= 200, events_project >= 100)
+
+plot_df <- delta_tbl_filt %>%
+  mutate(
+    label = sprintf("%s (n=%d, events=%d)", project, n_project, events_project),
+    # order by delta (most negative at bottom/top depending on flip)
+    label = factor(label, levels = label[order(delta_logHR)])
+  )
+
+ggplot(plot_df, aes(x = delta_logHR, y = label)) +
+  geom_vline(xintercept = 0, linetype = 2, linewidth = 0.6) +
+  geom_errorbarh(
+    aes(xmin = delta_logHR - 1.96*se, xmax = delta_logHR + 1.96*se, alpha = sig_fdr),
+    height = 0.2, linewidth = 0.9, na.rm = TRUE
+  ) +
+  geom_point(aes(alpha = sig_fdr, shape = sig_fdr), size = 2.6, na.rm = TRUE) +
+  scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.35)) +
+  scale_shape_manual(values = c(`TRUE` = 19, `FALSE` = 1)) +
+  labs(
+    x = expression(Delta*log(HR)~"(score effect: cancer − SKCM)"),
+    y = NULL
+  ) +
+  theme_bw(base_size = 11) +
+  theme(legend.position = "none")
+
+

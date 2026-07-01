@@ -1,0 +1,8 @@
+"0","# 5c) Plot PFS"
+"0","ggsurvplot("
+"0","  fit_pfs,"
+"0","  data       = clin_final,"
+"0","  pval       = TRUE,"
+"0","  risk.table = TRUE"
+"0",")"
+"1","                     "

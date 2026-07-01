@@ -1,0 +1,2280 @@
+---
+title: "Validation and survival analysis HLA-II^CONST signature"
+author: "Mario Presti"
+date: '`r paste("First created on November 2024 Updated on ", format(Sys.Date(), "%d %B %Y"))`'
+output:
+  github_document:
+    toc: true
+    toc_depth: 5
+knit: |
+  (function(inputFile, encoding) {
+    dir.create("../Reports", showWarnings = FALSE)
+    rmarkdown::render(inputFile, encoding = encoding, output_dir = "../Reports")
+  })
+---
+
+```{r setup, include=FALSE}
+library(biomaRt)
+library(TCGAbiolinks)
+library(singscore)
+library(survival)
+library(survminer)
+library(DESeq2)
+library(SummarizedExperiment)
+library(edgeR)
+library(dplyr)
+library(openxlsx)
+library(ggsurvfit)
+library(ComplexHeatmap)
+library(tidyr)
+library(msigdbr)
+library(clusterProfiler)
+library(progeny)
+library(GSVA)
+library(binom)
+library(ggpubr)
+library(GSVA)
+library(dplyr)
+library(pheatmap)
+library(stringr)
+library(immunarch)
+
+load("../controlled_data/combined_dds.RData")
+```
+
+# SIGNATURE CREATION
+
+With the top/bottom 20 genes, a gene signature was created to investigate survival in TCGA patient.
+Of note: baseMean above 3000 was chosen as a cutoff as we wanted to use highly expressed genes to investigate tumor biopsies, T cell and immune-related genes were excluded from the signature as in Gokuldass et al, Cancer Immunol Immunoth. 2022
+#create signature
+```{r, eval=TRUE}
+#Retrieve DEG genes in HLA high
+HLA_DR_genes <- grep("^HLA-DR", rownames(combined_dds), value = T)
+HLA_DP_genes <- grep("^HLA-DP", rownames(combined_dds), value = T)
+HLA_DQ_genes <- grep("^HLA-DQ", rownames(combined_dds), value = T)
+HLAII_genes <- unique(c("CIITA", HLA_DR_genes, HLA_DP_genes, HLA_DQ_genes))
+
+combined_results_filter_less_strict <- as.data.frame(results(combined_dds, name = "KNN_cluster_HLA_high_vs_HLA_low",cooksCutoff = T)) %>% 
+  dplyr::filter(padj < 0.01 & baseMean >30 & abs(log2FoldChange) > 1.5)
+combined_results_filter_less_strict$gene <- rownames(combined_results_filter_less_strict)
+
+
+immunological_dataset <- read.table("../public/immunological_gene_lists.txt", header = F, sep = "\t",fill = T)
+immunological_dataset <- subset(immunological_dataset, V3 == "GO")
+
+# ensembl <- useEnsembl("ensembl", dataset = "hsapiens_gene_ensembl")
+load("../controlled_data/ensembl.RData") #saved it to ensure it works when ensembl is down
+# 2. Get all genes annotated to immune GO terms
+go_terms <- immunological_dataset$V2
+
+immune_anno <- getBM(
+  attributes = c("hgnc_symbol", "go_id"),  # or "hgnc_symbol"
+  filters    = "go",                              # correct filter name
+  values     = go_terms,
+  mart       = ensembl
+)
+
+
+immune_genes <- unique(immune_anno$hgnc_symbol)
+
+# 3. Filter your own list
+my_genes       <- combined_results_filter_less_strict$gene
+filtered_genes <- setdiff(my_genes, immune_genes)
+
+combined_results_filter_no_immune <- subset(combined_results_filter_less_strict, gene %in% filtered_genes)
+
+# top 15 up
+up15 <- combined_results_filter_no_immune %>%
+  dplyr::filter(baseMean > 800 & log2FoldChange > 2.5) %>%
+ top_n(15, wt = log2FoldChange)
+
+# top 15 *down* (note the negative n)
+down15 <- combined_results_filter_no_immune %>%
+  dplyr::filter(baseMean > 800 & log2FoldChange < -2.5) %>%
+  top_n(-30, wt = log2FoldChange)
+
+# combine
+gene_signature <- dplyr::bind_rows(up15, down15) %>%
+  dplyr::arrange(desc(log2FoldChange))
+gene_signature
+
+#manually pruning immune-genes
+# genes_to_remove <- c("CCL2", "IL24", "CIITA", "CXCL8", "IL1B")
+genes_to_remove <- c("CIITA")
+genes_to_remove_i <- which(rownames(gene_signature) %in% genes_to_remove)
+if (length(genes_to_remove_i) == 0){
+  gene_signature_manually_curated <- gene_signature
+} else {
+  gene_signature_manually_curated <- gene_signature[-genes_to_remove_i,]
+}
+
+
+# define your lists
+up_list   <- rownames(subset(gene_signature_manually_curated, log2FoldChange > 0))
+down_list <- rownames(subset(gene_signature_manually_curated, log2FoldChange < 0))
+gene_signature_manually_curated
+cat(paste0(gene_signature_manually_curated$gene," ", gene_signature_manually_curated$log2FoldChange ))
+length(gene_signature_manually_curated$gene)
+```
+
+## Comparison with other signatures
+
+What is the level of overlap of the signature with Kim et al, JCI 2021? How well does it predict HLA-II expression in the TCL data?
+
+```{r, fig.width=7, fig.height=7}
+dediff_kim <- read.xlsx("E:/PhD_projects/MHCII_project/TCL_analyses/Kim_dediff_signature.xlsx")
+
+kim_genes <- unique(na.omit(dediff_kim$DediffGenes))
+dediff_genes <- unique(na.omit(subset(combined_results_filter_less_strict,log2FoldChange>0)[["gene"]]))
+signature <- unique(na.omit(subset(gene_signature_manually_curated,log2FoldChange>0)[["gene"]]))
+reactome_HLA_II <- msigdbr(db_species = "HS", collection = "C2", subcollection = "CP:REACTOME") %>%
+  filter(gs_name == "REACTOME_MHC_CLASS_II_ANTIGEN_PRESENTATION") %>% dplyr::pull(gene_symbol) %>% unique()
+
+gene_sets <- list(
+  Kim_dediff = kim_genes,
+  HLA_II_CONST_signature_raw = dediff_genes,
+  HLA_II_CONST_signature_clean = signature,
+  reactome_HLA_II = reactome_HLA_II
+)
+
+ggVennDiagram::ggVennDiagram(gene_sets, label = "count") +
+  scale_fill_gradient(low = "white", high = "red") +
+  theme_void(base_size = 20)
+
+combined_vst <- vst(combined_dds, blind = TRUE)
+expr <- assay(combined_vst)
+expr_mat <- as.matrix(expr)
+mode(expr_mat) <- "numeric"
+
+# de-duplicate genes if needed (keep the most variable probe/gene)
+if (any(duplicated(rownames(expr_mat)))) {
+  expr_mat <- expr_mat[!duplicated(rownames(expr_mat)), ]
+}
+
+gsparam_kim <- ssgseaParam(exprData = expr_mat, geneSets = gene_sets)
+ssgsea_scores_kim <- GSVA::gsva(param = gsparam_kim,verbose = TRUE)
+ssgsea_z_kim <- t(scale(t(ssgsea_scores_kim)))
+
+annots <- combined_dds$KNN_cluster
+names(annots) <- colnames(combined_dds)
+ann_colors <- list(
+  HLA_status = c(
+    HLA_low        = "#0384fc",
+    HLA_mid_low         = "darkblue",
+    HLA_mid_high= "#8b0000",
+    HLA_high   = "red"
+  )
+)
+levels4 <- c("HLA_high", "HLA_mid_high", "HLA_mid_low", "HLA_low") 
+annot_df_kim <- data.frame(
+  HLA_status = factor(annots[colnames(ssgsea_z_kim)], levels = levels4)
+)
+
+CIITA_counts <- assay(vst(combined_dds))["CIITA",]
+IFN_dediff_score <- ssgsea_z_kim[ "Kim_dediff",]
+IFN_dediff_score <- IFN_dediff_score[names(CIITA_counts)]
+HLA_II_CONST_signature_raw_score <- ssgsea_z_kim[ "HLA_II_CONST_signature_raw",]
+HLA_II_CONST_signature_raw_score <- HLA_II_CONST_signature_raw_score[names(CIITA_counts)]
+HLA_II_CONST_signature_clean_score <- ssgsea_z_kim[ "HLA_II_CONST_signature_clean",]
+HLA_II_CONST_signature_clean_score <- HLA_II_CONST_signature_clean_score[names(CIITA_counts)]
+reactome_HLA_II_score <- ssgsea_z_kim[ "reactome_HLA_II",]
+reactome_HLA_II_score <- reactome_HLA_II_score[names(CIITA_counts)]
+
+
+
+scatterdata <- rbind(CIITA_counts, IFN_dediff_score, HLA_II_CONST_signature_raw_score, HLA_II_CONST_signature_clean_score, reactome_HLA_II_score)
+scatterdata <- as.data.frame(t(scatterdata))
+scatterdata$Sample <- rownames(scatterdata)
+scatterdata<- scatterdata %>% left_join(as.data.frame(colData(combined_dds)), by = "Sample")
+
+
+IFN_dediff_plot <- ggscatter(
+  scatterdata,
+  x = "CIITA_counts",
+  y = "IFN_dediff_score",
+  shape = "Dataset",
+  fill = "KNN_cluster",
+  color = "KNN_cluster",
+  merge = TRUE,
+  cor.coef = TRUE,
+  title = "IFN dediff score - CIITA expression"
+) +
+  geom_smooth(
+    data = scatterdata,
+    mapping = aes(
+      x = CIITA_counts,
+      y = IFN_dediff_score,
+      group = 1
+    ),
+    method = "lm",
+    formula = y ~ x,
+    se = TRUE,
+    inherit.aes = FALSE,
+    color = "black",
+    fill = "grey70"
+  ) +
+  scale_color_manual(values = c(
+    HLA_low = "#0384fc",
+    HLA_mid_low = "darkblue",
+    HLA_mid_high = "#8b0000",
+    HLA_high = "red"
+  )) +
+  scale_fill_manual(values = c(
+    HLA_low = "#0384fc",
+    HLA_mid_low = "darkblue",
+    HLA_mid_high = "#8b0000",
+    HLA_high = "red"
+  ))
+IFN_dediff_plot
+
+HLA_II_CONST_clean_plot <- ggscatter(
+  scatterdata,
+  x = "CIITA_counts",
+  y = "HLA_II_CONST_signature_clean_score",
+  shape = "Dataset",
+  fill = "KNN_cluster",
+  color = "KNN_cluster",
+  merge = TRUE,
+  cor.coef = TRUE,
+  title = "HLA-II^CONST+ dediff score - CIITA expression"
+) +
+  geom_smooth(
+    data = scatterdata,
+    mapping = aes(
+      x = CIITA_counts,
+      y = HLA_II_CONST_signature_clean_score,
+      group = 1
+    ),
+    method = "lm",
+    formula = y ~ x,
+    se = TRUE,
+    inherit.aes = FALSE,
+    color = "black",
+    fill = "grey70"
+  ) +
+  scale_color_manual(values = c(
+    HLA_low = "#0384fc",
+    HLA_mid_low = "darkblue",
+    HLA_mid_high = "#8b0000",
+    HLA_high = "red"
+  )) +
+  scale_fill_manual(values = c(
+    HLA_low = "#0384fc",
+    HLA_mid_low = "darkblue",
+    HLA_mid_high = "#8b0000",
+    HLA_high = "red"
+  ))
+HLA_II_CONST_clean_plot
+
+HLA_II_CONST_raw_plot <- ggscatter(
+  scatterdata,
+  x = "CIITA_counts",
+  y = "HLA_II_CONST_signature_raw_score",
+  shape = "Dataset",
+  fill = "KNN_cluster",
+  color = "KNN_cluster",
+  merge = TRUE,
+  cor.coef = TRUE,
+  title = "HLA-II^CONST+ dediff score raw - CIITA expression"
+) +
+  geom_smooth(
+    data = scatterdata,
+    mapping = aes(
+      x = CIITA_counts,
+      y = HLA_II_CONST_signature_raw_score,
+      group = 1
+    ),
+    method = "lm",
+    formula = y ~ x,
+    se = TRUE,
+    inherit.aes = FALSE,
+    color = "black",
+    fill = "grey70"
+  ) +
+  scale_color_manual(values = c(
+    HLA_low = "#0384fc",
+    HLA_mid_low = "darkblue",
+    HLA_mid_high = "#8b0000",
+    HLA_high = "red"
+  )) +
+  scale_fill_manual(values = c(
+    HLA_low = "#0384fc",
+    HLA_mid_low = "darkblue",
+    HLA_mid_high = "#8b0000",
+    HLA_high = "red"
+  ))
+HLA_II_CONST_raw_plot
+
+reactome_plot <- ggscatter(
+  scatterdata,
+  x = "CIITA_counts",
+  y = "reactome_HLA_II_score",
+  shape = "Dataset",
+  fill = "KNN_cluster",
+  color = "KNN_cluster",
+  merge = TRUE,
+  cor.coef = TRUE,
+  title = "HLA-II reactome - CIITA expression"
+) +
+  geom_smooth(
+    data = scatterdata,
+    mapping = aes(
+      x = CIITA_counts,
+      y = reactome_HLA_II_score,
+      group = 1
+    ),
+    method = "lm",
+    formula = y ~ x,
+    se = TRUE,
+    inherit.aes = FALSE,
+    color = "black",
+    fill = "grey70"
+  ) +
+  scale_color_manual(values = c(
+    HLA_low = "#0384fc",
+    HLA_mid_low = "darkblue",
+    HLA_mid_high = "#8b0000",
+    HLA_high = "red"
+  )) +
+  scale_fill_manual(values = c(
+    HLA_low = "#0384fc",
+    HLA_mid_low = "darkblue",
+    HLA_mid_high = "#8b0000",
+    HLA_high = "red"
+  ))
+reactome_plot
+```
+
+# VALIDATION
+
+## Get in House biopsy data
+```{r}
+source("TIL_data_preparation.R")
+
+stopifnot(is.matrix(TIL_counts))
+sym <- rownames(TIL_counts)
+
+# 1) biomaRt: SYMBOL -> Ensembl + transcript lengths
+# ensembl <- useEnsembl(
+#   biomart = "genes",
+#   dataset = "hsapiens_gene_ensembl"
+# )
+annot <- getBM(
+  attributes = c("hgnc_symbol","ensembl_gene_id","gene_biotype",
+                 "ensembl_transcript_id","transcript_length","transcript_is_canonical"),
+  filters    = "hgnc_symbol",
+  values     = unique(sym),
+  mart       = ensembl
+)
+
+# Keep only rows with symbol present in your matrix
+annot <- annot %>% dplyr::filter(hgnc_symbol %in% sym)
+
+# 2) Prefer protein-coding; prefer canonical transcripts if present
+annot_filt <- annot %>%
+  dplyr::filter(gene_biotype == "protein_coding") %>%
+  mutate(is_canonical = transcript_is_canonical == 1)
+
+# 3) Compute one length per SYMBOL (in BASES)
+# First, within each SYMBOL pick canonical transcripts if any; else use all.
+length_by_symbol <- annot_filt %>%
+  group_by(hgnc_symbol) %>%
+  dplyr::mutate(use_canonical = any(is_canonical)) %>%
+  dplyr::filter(if (dplyr::first(use_canonical)) is_canonical else TRUE) %>%
+  summarise(gene_length_bases = median(transcript_length, na.rm = TRUE), .groups = "drop")
+
+# Fallback: for symbols that dropped out (no protein_coding or NA), use any biotype
+missing_syms <- setdiff(sym, length_by_symbol$hgnc_symbol)
+if (length(missing_syms) > 0) {
+  fallback <- annot %>%
+    dplyr::filter(hgnc_symbol %in% missing_syms) %>%
+    dplyr::group_by(hgnc_symbol) %>%
+    dplyr::summarise(gene_length_bases = median(transcript_length, na.rm = TRUE), .groups = "drop")
+  length_by_symbol <- bind_rows(length_by_symbol, fallback) %>%
+    distinct(hgnc_symbol, .keep_all = TRUE)
+}
+
+# 4) Align lengths to counts (BASES; do NOT divide by 1000)
+gene_len <- length_by_symbol$gene_length_bases[match(sym, length_by_symbol$hgnc_symbol)]
+
+if (any(duplicated(sym))) {
+  message("Duplicated symbols detected; collapsing by sum.")
+  TIL_counts <- rowsum(TIL_counts, group = sym, reorder = FALSE)
+  sym <- rownames(TIL_counts)
+  gene_len <- length_by_symbol$gene_length_bases[match(sym, length_by_symbol$hgnc_symbol)]
+}
+
+# Warn about missing lengths
+na_len <- is.na(gene_len)
+if (any(na_len)) {
+  message(sprintf("Dropping %d genes with missing lengths before RPKM.", sum(na_len)))
+}
+
+# 5) Create DGEList with lengths (in BASES)
+dge <- DGEList(counts = TIL_counts[!na_len, , drop = FALSE],
+               genes  = data.frame(Symbol = sym[!na_len],
+                                   Length = gene_len[!na_len],
+                                   row.names = sym[!na_len]))
+
+# 6) TMM normalization
+dge <- calcNormFactors(dge)
+
+# 7) Compute RPKM/FPKM
+# edgeR::rpkm expects 'gene.length' in BASES and divides by 1000 internally.
+rpkm_mat <- rpkm(dge, gene.length = dge$genes$Length, normalized.lib.sizes = TRUE)
+
+# TPM not used but code left for future changes
+# TPM = scale RPK to 1e6
+# RPK = counts / (length_kb); length_kb = length_bases / 1000
+length_kb <- dge$genes$Length / 1000
+rpk <- sweep(dge$counts, 1, length_kb, "/")
+tpm_mat <- sweep(rpk, 2, colSums(rpk), "/") * 1e6
+
+rank_data <- rankGenes(rpkm_mat)
+```
+
+## Compare biopsy signature score with TCL HLA-II expression
+
+```{r concordance among signature and flow data from tcls}
+tcl_data <- read.xlsx("../controlled_data/TIL/MHC_expression_TCLs.xlsx",
+                      sheet = "Final Data")
+
+scores_fortcl <- simpleScore(rank_data, upSet = up_list, downSet = down_list, centerScore = TRUE)
+scores_fortcl$sample <- rownames(scores_fortcl)
+
+validation_signature <- tcl_data %>%
+  mutate(sample = matching_col) %>%
+  inner_join(dplyr::select(scores_fortcl, sample, sig = TotalScore), by = "sample") %>%
+  transmute(
+    sample,
+    fc       = as.numeric(FC.Baseline.to.Isotype),
+    fc_log   = log10(pmax(fc, 1e-4)),              # log-transform; protects from 0
+    sig      = as.numeric(sig),
+    fc_ifn   = as.numeric(FC.IFN.to.isotype),
+    fc_ifn_log   = log10(pmax(fc_ifn, 1e-4)),
+    reac_base = as.numeric(reactivity_baseline_YTIL),
+    reac_IFNg = as.numeric(reactivity_IFNg_yTIL)
+  )
+
+## 1) HLA-II FC vs isotype
+cc_fc <- complete.cases(validation_signature$sig, validation_signature$fc)
+ct_fc <- cor.test(validation_signature$sig[cc_fc],
+                  validation_signature$fc_log[cc_fc],
+                  method = "spearman", exact = FALSE)
+
+ggplot(validation_signature, aes(sig, fc_log)) +
+  geom_point(size = 2, alpha = .8) +
+  geom_smooth(method = "glm", se = FALSE) +
+  labs(
+    x = "Biopsy signature score",
+    y = "HLA-II FC vs isotype",
+    title   = sprintf("Spearman rho = %.2f, p = %.3g", ct_fc$estimate, ct_fc$p.value),
+    caption = paste0("N = ", sum(cc_fc))
+  ) +
+  theme_classic()
+
+## 2) CD4+ TIL reactivity (untreated)
+cc_reac <- complete.cases(validation_signature$sig, validation_signature$reac_base)
+ct_reac <- cor.test(validation_signature$sig[cc_reac],
+                    validation_signature$reac_base[cc_reac],
+                    method = "spearman", exact = FALSE)
+
+ggplot(validation_signature, aes(sig, reac_base)) +
+  geom_point(size = 2, alpha = .8) +
+  geom_smooth(method = "glm", se = FALSE) +
+  labs(
+    x = "Biopsy signature score",
+    y = "CD4+ TIL Reactivity (untreated)",
+    title   = sprintf("Spearman rho = %.2f, p = %.3g", ct_reac$estimate, ct_reac$p.value),
+    caption = paste0("N = ", sum(cc_reac))
+  ) +
+  theme_classic()
+
+## 3) CD4+ TIL reactivity (IFN)
+cc_reac_ifn <- complete.cases(validation_signature$sig, validation_signature$reac_IFNg)
+ct_reac_ifn <- cor.test(validation_signature$sig[cc_reac_ifn],
+                        validation_signature$reac_IFNg[cc_reac_ifn],
+                        method = "spearman", exact = FALSE)
+
+ggplot(validation_signature, aes(sig, reac_IFNg)) +
+  geom_point(size = 2, alpha = .8) +
+  geom_smooth(method = "glm", se = FALSE) +
+  labs(
+    x = "Biopsy signature score",
+    y = "CD4 TIL reactivity (IFN)",
+    title   = sprintf("Spearman rho = %.2f, p = %.3g", ct_reac_ifn$estimate, ct_reac_ifn$p.value),
+    caption = paste0("N = ", sum(cc_reac_ifn))
+  ) +
+  theme_classic()
+
+## 4) HLA-II FC vs isotype (IFN condition)
+cc_ifn <- complete.cases(validation_signature$sig, validation_signature$fc_ifn_log)
+ct_ifn <- cor.test(validation_signature$sig[cc_ifn],
+                   validation_signature$fc_ifn_log[cc_ifn],
+                   method = "spearman", exact = FALSE)
+
+ggplot(validation_signature, aes(sig, fc_ifn_log)) +
+  geom_point(size = 2, alpha = .8) +
+  geom_smooth(method = "glm", se = FALSE) +
+  labs(
+    x = "Biopsy signature score",
+    y = "HLA-II FC vs isotype (IFN)",
+    title   = sprintf("Spearman rho = %.2f, p = %.3g", ct_ifn$estimate, ct_ifn$p.value),
+    caption = paste0("N = ", sum(cc_ifn))
+  ) +
+  theme_classic()
+
+## this is the result using class II genes only
+scores_fortcl_HLA <- simpleScore(rank_data, upSet = HLAII_genes, centerScore = TRUE)
+scores_fortcl_HLA$sample <- rownames(scores_fortcl)
+
+validation_signature_HLA <- tcl_data %>%
+  mutate(sample = matching_col) %>%
+  inner_join(dplyr::select(scores_fortcl_HLA, sample, sig = TotalScore), by = "sample") %>%
+  transmute(
+    sample,
+    fc       = as.numeric(FC.Baseline.to.Isotype),
+    fc_log   = log10(pmax(fc, 1e-4)),              # log-transform; protects from 0
+    sig      = as.numeric(sig),
+    fc_ifn   = as.numeric(FC.IFN.to.isotype),
+    fc_ifn_log   = log10(pmax(fc_ifn, 1e-4)),
+    reac_base = as.numeric(reactivity_baseline_YTIL),
+    reac_IFNg = as.numeric(reactivity_IFNg_yTIL)
+  )
+
+## 1) HLA-II FC vs isotype
+cc_fc_hla <- complete.cases(validation_signature_HLA$sig, validation_signature_HLA$fc_log)
+ct_fc_hla <- cor.test(validation_signature_HLA$sig[cc_fc_hla],
+                  validation_signature_HLA$fc_log[cc_fc_hla],
+                  method = "spearman", exact = FALSE)
+
+ggplot(validation_signature_HLA, aes(sig, fc_log)) +
+  geom_point(size = 2, alpha = .8) +
+  geom_smooth(method = "glm", se = FALSE) +
+  labs(
+    x = "Biopsy HLA-II score",
+    y = "HLA-II FC vs isotype",
+    title   = sprintf("Spearman rho = %.2f, p = %.3g", ct_fc_hla$estimate, ct_fc_hla$p.value),
+    caption = paste0("N = ", sum(cc_fc))
+  ) +
+  theme_classic()
+
+## 2) CD4+ TIL reactivity (untreated)
+cc_reac_hla <- complete.cases(validation_signature_HLA$sig, validation_signature_HLA$reac_base)
+ct_reac <- cor.test(validation_signature_HLA$sig[cc_reac_hla],
+                    validation_signature_HLA$reac_base[cc_reac_hla],
+                    method = "spearman", exact = FALSE)
+
+ggplot(validation_signature_HLA, aes(sig, reac_base)) +
+  geom_point(size = 2, alpha = .8) +
+  geom_smooth(method = "glm", se = FALSE) +
+  labs(
+    x = "Biopsy HLA-II score",
+    y = "CD4+ TIL Reactivity (untreated)",
+    title   = sprintf("Spearman rho = %.2f, p = %.3g", ct_reac$estimate, ct_reac$p.value),
+    caption = paste0("N = ", sum(cc_reac))
+  ) +
+  theme_classic()
+
+## 3) CD4+ TIL reactivity (IFN)
+cc_reac_ifn_hla <- complete.cases(validation_signature_HLA$sig, validation_signature_HLA$reac_IFNg)
+ct_reac_ifn <- cor.test(validation_signature_HLA$sig[cc_reac_ifn_hla],
+                        validation_signature_HLA$reac_IFNg[cc_reac_ifn_hla],
+                        method = "spearman", exact = FALSE)
+
+ggplot(validation_signature_HLA, aes(sig, reac_IFNg)) +
+  geom_point(size = 2, alpha = .8) +
+  geom_smooth(method = "glm", se = FALSE) +
+  labs(
+    x = "Biopsy HLA-II score",
+    y = "CD4 TIL reactivity (IFN)",
+    title   = sprintf("Spearman rho = %.2f, p = %.3g", ct_reac_ifn$estimate, ct_reac_ifn$p.value),
+    caption = paste0("N = ", sum(cc_reac_ifn))
+  ) +
+  theme_classic()
+
+## 4) HLA-II FC vs isotype (IFN condition)
+cc_ifn_hla <- complete.cases(validation_signature_HLA$sig, validation_signature_HLA$fc_ifn_log)
+ct_ifn_hla <- cor.test(validation_signature_HLA$sig[cc_ifn_hla],
+                   validation_signature_HLA$fc_ifn_log[cc_ifn_hla],
+                   method = "spearman", exact = FALSE)
+
+ggplot(validation_signature_HLA, aes(sig, fc_ifn_log)) +
+  geom_point(size = 2, alpha = .8) +
+  geom_smooth(method = "glm", se = FALSE) +
+  labs(
+    x = "Biopsy HLA-II score",
+    y = "HLA-II FC vs isotype (IFN)",
+    title   = sprintf("Spearman rho = %.2f, p = %.3g", ct_ifn_hla$estimate, ct_ifn_hla$p.value),
+    caption = paste0("N = ", sum(cc_ifn))
+  ) +
+  theme_classic()
+```
+
+# SURVIVAL ANALYSIS
+
+# GDC data preparation
+```{r GDC download}
+# 1. Query and download FPKM counts + clinical
+# query <- GDCquery(project = "TCGA-SKCM",
+#                   data.category = "Transcriptome Profiling",
+#                   data.type     = "Gene Expression Quantification",
+#                   workflow.type = "STAR - Counts")
+
+# GDCdownload(query, directory = "../controlled_data/GDC_data/")
+# dataSE_sckm <- GDCprepare(query, directory = "../../GDCdata/")
+
+load("../controlled_data/GDCdata/TCGA-SKCM/dataSE_sckm.RData")
+expr_skcm  <- assay(dataSE_sckm)               # sample × gene FPKM
+clin_skcm  <- colData(dataSE_sckm)  
+counts_mel = expr_skcm
+
+clinical_data <- read.xlsx(xlsxFile ="../public/Survival_data_TCGA_upd.xlsx", rowNames = T)
+clin_final <- as.data.frame(merge(x = clinical_data,y = clin_skcm, by.x = "bcr_patient_barcode", by.y = "patient"))
+
+rownames(counts_mel) <- sub("\\..*$", "", rownames(counts_mel))
+# 4) Retrieve gene lengths (median transcript length per gene) from Ensembl
+# ensembl <- useEnsembl("ensembl", dataset="hsapiens_gene_ensembl")
+geneAnnot <- getBM(
+  attributes = c("ensembl_gene_id", "transcript_length"),
+  filters    = "ensembl_gene_id",
+  values     = rownames(counts_mel),
+  mart       = ensembl
+)
+# compute median transcript length
+library(dplyr)
+geneLengths <- geneAnnot %>%
+  dplyr::group_by(ensembl_gene_id) %>%
+  dplyr::summarise(median_length = median(transcript_length)) %>%
+  dplyr::ungroup()
+
+
+# match lengths to your count matrix
+length.kb <- geneLengths$median_length[match(rownames(counts_mel),
+                                             geneLengths$ensembl_gene_id)] / 1000
+
+# 5) Create DGEList and calculate normalization factors
+dge <- DGEList(counts = counts_mel, genes = data.frame(Length = length.kb))
+dge <- calcNormFactors(dge)  # TMM normalization
+
+# 6) Compute FPKM
+fpkm.mat_skcm <- rpkm(dge,
+                 gene.length        = dge$genes$Length,
+                 normalized.lib.sizes = TRUE)
+
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+
+
+# 2. Map IDs
+hugo <- mapIds(
+  org.Hs.eg.db,
+  keys      = rownames(fpkm.mat_skcm),
+  column    = "SYMBOL",
+  keytype   = "ENSEMBL",
+  multiVals = "first"
+)
+```
+
+# Administrative censoring at 15 years
+```{r}
+#administrative censoring at 15 years
+clin_final$DSS.years <- clin_final$DSS.time/365
+clin_final$DSS.years_censored   <- pmin(clin_final$DSS.years, 15)
+clin_final$DSS_censored <- ifelse(clin_final$DSS.years > 15, 0, clin_final$DSS)
+clin_final$OS.years <- clin_final$OS.time/365
+clin_final$OS.years_censored   <- pmin(clin_final$OS.years, 15)
+clin_final$OS_censored <- ifelse(clin_final$OS.years > 15, 0, clin_final$OS)
+clin_final$PFI.years <- clin_final$PFI.time/365
+clin_final$PFI.years_censored   <- pmin(clin_final$PFI.years, 15)
+clin_final$PFI_censored <- ifelse(clin_final$PFI.years > 15, 0, clin_final$PFI)
+
+cat(paste0("Administrative censoring: ", round((length(which(clin_final$DSS.years > 15))/length(clin_final$DSS.years))*100), "%"))
+```
+
+
+
+# Univariate analysis on TCGA-SKCM
+```{r CONST+ score and univariate skcm, fig.width=15, fig.height=8}
+#Subset out NAs and rename the exp matrix
+keep <- !is.na(hugo)
+expr_skcm <- fpkm.mat_skcm[keep, , drop=FALSE]
+rownames(expr_skcm) <- hugo[keep]
+
+#get clinical data
+md <- read.table("../public/md_SKCM.txt", header = T, sep = "\t")
+# define your lists
+up_list   <- rownames(subset(gene_signature_manually_curated, log2FoldChange > 0))
+down_list <- rownames(subset(gene_signature_manually_curated, log2FoldChange < 0))
+
+rank_data <- rankGenes(expr_skcm)
+
+# compute simple singscore
+scores <- simpleScore(rank_data,
+                      upSet   = up_list,
+                      downSet = down_list)
+rownames(scores) <- gsub(x= rownames(scores), pattern = "\\.", replacement = "-")
+scores$sample <- rownames(scores)
+scores <- subset(scores, sample %in% rownames(md))
+
+clin_final <- subset(clin_final, barcode %in% scores$sample)
+clin_final$sample <- clin_final$barcode
+scores <- scores[order(scores$sample, clin_final$sample),]
+
+# assuming rownames(md) are your sample IDs:
+clin_final$signature_score <- scores$TotalScore[
+  match(clin_final$sample, scores$sample)
+]
+
+# Check they all matched:
+stopifnot(!any(is.na(clin_final$signature_score)))
+
+clin_final <- clin_final %>% as.data.frame() %>%
+  dplyr::mutate(group = if_else(signature_score >= 
+                           quantile(signature_score, 0.75),
+                         "High","Low"))
+clin_final$group <- relevel(as.factor(clin_final$group), ref = "Low")
+library(survival)
+library(survminer)
+
+#Fit the survival model with a continuous z-score as a sensitivity analysis
+clin_final$score_z <- as.numeric(scale(clin_final$signature_score))
+
+fit_os_cont <- coxph(
+  Surv(OS.years_censored, OS_censored) ~ score_z,
+  data = clin_final
+)
+summary(fit_os_cont)
+
+fit_pfs_cont <- coxph(
+  Surv(PFI.years_censored, PFI_censored) ~ score_z,
+  data = clin_final
+)
+summary(fit_pfs_cont)
+
+# 4) Fit the survival model in one go, using the data frame
+
+fit_dss <- survfit(
+  Surv(DSS.years_censored, DSS_censored) ~ group,
+  data = clin_final
+)
+
+#proportional hazard model
+cat("PH test p value: ", cox.zph(coxph(Surv(DSS.years_censored, DSS_censored) ~ group, data = clin_final))[["table"]]["GLOBAL","p"])
+
+
+names(fit_dss$strata) <- gsub("group=","", names(fit_dss$strata))
+s_cox <- coxph(Surv(DSS.years_censored, DSS_censored) ~ group, data = clin_final)
+s_cox   <- summary(s_cox)
+hr     <- s_cox$coefficients[, "exp(coef)"]
+ci_lo  <- s_cox$conf.int[, "lower .95"]
+ci_hi  <- s_cox$conf.int[, "upper .95"]
+pval   <- s_cox$coefficients[, "Pr(>|z|)"]
+hr_lab <- sprintf("HR=%.2f (95%% CI %.2f–%.2f)", hr, ci_lo, ci_hi)
+p_lab  <- paste0("p = ", sprintf("%.4f", pval))
+
+# 5a) plot DSS
+ggsurvfit(fit_dss, linewidth=0.8)+
+    add_censor_mark() +
+    add_risktable(
+        size            = 7,
+        theme           = theme_risktable_default(plot.title.size  = 15),
+        risktable_stats = "{n.risk} ({cum.event})",
+        stats_label     = "Number at risk",risktable_height = 0.2
+    ) +add_risktable_strata_symbol(symbol = "•", size = 15)+
+    labs(
+        x = "Years",
+        y = paste0("Disease specific survival", " (%)")
+    ) +
+  scale_ggsurvfit(x_scales = list(limits = c(0,15), breaks=seq(0,15, by=3)))+
+    scale_y_continuous(limits = c(0, 1),
+                       labels = scales::percent_format(accuracy = 1),
+                       expand = c(0, 0)) +
+    theme_classic() +
+    theme(
+        plot.title       = element_text(hjust = 0.5, size = 20),
+        plot.subtitle    = element_text(hjust = 0.5, size = 18),
+        axis.title.x     = element_text(size = 20),
+        axis.title.y     = element_text(size = 20, margin = margin(t = 0, r = 0, b = 0, l = 0)),
+        axis.text.x      = element_text(size = 15),
+        axis.text.y      = element_text(size = 15),
+        legend.position  = "top",
+        legend.direction = "vertical",
+        legend.text      = element_text(size = 25),
+        legend.key.size  = unit(30, "bigpts"),
+        legend.title     = element_blank(),
+        plot.margin      = unit(c(0,0.2,0,0), 'lines')
+    )+scale_color_manual(values = c("High" = "red", "Low" = "blue"))+
+  ggplot2::annotate(
+        "text",
+        x     = 0,
+        y     = 0.2,
+        label = hr_lab,
+        size  = 10,
+        hjust = 0
+      ) +
+      ggplot2::annotate(
+        "text",
+        x     = 0,
+        y     = 0.1,
+        label = p_lab,
+        size  = 10,
+        hjust = 0
+      )
+
+fit_os <- survfit(
+  Surv(OS.years_censored, OS_censored) ~ group,
+  data = clin_final
+)  
+
+fit_pfs <- survfit(
+  Surv(PFI.years_censored, PFI_censored) ~ group,
+  data = clin_final
+)
+
+# 5b) Plot
+ggsurvplot(
+  fit_os,
+  data       = clin_final,
+  pval       = TRUE,
+  risk.table = TRUE
+)
+
+# 5c) Plot PFS
+ggsurvplot(
+  fit_pfs,
+  data       = clin_final,
+  pval       = TRUE,
+  risk.table = TRUE
+)
+
+
+```
+
+## Subgroup analysis on the few ICI treated patients in TCGA data
+
+```{r, fig.width=15, fig.height=8}
+library(data.table)
+clin_ici_tcga <- fread("E:/PhD_projects/MHCII_project/TCGA_SKCM/clinical_data_ICI_patients_SKCM/clinical.tsv")
+ici_treated_tcga_skcm <- unique(clin_ici_tcga$cases.submitter_id)
+clin_final <- clin_final %>% mutate(ICI= case_when(bcr_patient_barcode %in% ici_treated_tcga_skcm ~ "Yes",
+                                                             !(bcr_patient_barcode %in% ici_treated_tcga_skcm) ~ "No")) 
+table(clin_final$ICI)
+
+fit_cox_ICI <- survfit(
+  Surv(DSS.years_censored, DSS_censored) ~ group,
+  data = dplyr::filter(clin_final, ICI == "Yes")
+)
+
+names(fit_cox_ICI$strata) <- gsub("group=","", names(fit_cox_ICI$strata))
+s_cox_ICI <- coxph(Surv(DSS.years_censored, DSS_censored) ~ group, data = dplyr::filter(clin_final, ICI == "Yes"))
+s_cox_ICI   <- summary(s_cox_ICI)
+hr     <- s_cox_ICI$coefficients[, "exp(coef)"]
+ci_lo  <- s_cox_ICI$conf.int[, "lower .95"]
+ci_hi  <- s_cox_ICI$conf.int[, "upper .95"]
+pval   <- s_cox_ICI$coefficients[, "Pr(>|z|)"]
+hr_lab <- sprintf("HR=%.2f (95%% CI %.2f–%.2f)", hr, ci_lo, ci_hi)
+p_lab  <- paste0("p = ", sprintf("%.4f", pval))
+
+# plot dss
+ggsurvfit(fit_cox_ICI, linewidth=0.8)+
+    add_censor_mark() +
+    add_risktable(
+        size            = 7,
+        theme           = theme_risktable_default(plot.title.size  = 15),
+        risktable_stats = "{n.risk} ({cum.event})",
+        stats_label     = "Number at risk",risktable_height = 0.2
+    ) +add_risktable_strata_symbol(symbol = "•", size = 15)+
+    labs(
+        x = "Years",
+        y = paste0("Disease specific survival", " (%)")
+    ) +
+  scale_ggsurvfit(x_scales = list(limits = c(0,15), breaks=seq(0,15, by=3)))+
+    scale_y_continuous(limits = c(0, 1),
+                       labels = scales::percent_format(accuracy = 1),
+                       expand = c(0, 0)) +
+    theme_classic() +
+    theme(
+        plot.title       = element_text(hjust = 0.5, size = 20),
+        plot.subtitle    = element_text(hjust = 0.5, size = 18),
+        axis.title.x     = element_text(size = 20),
+        axis.title.y     = element_text(size = 20, margin = margin(t = 0, r = 0, b = 0, l = 0)),
+        axis.text.x      = element_text(size = 15),
+        axis.text.y      = element_text(size = 15),
+        legend.position  = "top",
+        legend.direction = "vertical",
+        legend.text      = element_text(size = 25),
+        legend.key.size  = unit(30, "bigpts"),
+        legend.title     = element_blank(),
+        plot.margin      = unit(c(0,0.2,0,0), 'lines')
+    )+scale_color_manual(values = c("High" = "red", "Low" = "blue"))+
+  ggplot2::annotate(
+        "text",
+        x     = 0,
+        y     = 0.2,
+        label = hr_lab,
+        size  = 10,
+        hjust = 0
+      ) +
+      ggplot2::annotate(
+        "text",
+        x     = 0,
+        y     = 0.1,
+        label = p_lab,
+        size  = 10,
+        hjust = 0
+      )
+  
+
+```
+
+## Subgroup analysis on all the patients who ever received immunotherapy
+
+```{r,fig.width=15, fig.height=8}
+clin_immuno_tcga <- fread("../public/all_immunotherapies_SKCM.tsv")
+immuno_treated_tcga_skcm <- unique(clin_immuno_tcga$`Case ID`)
+clin_final <- clin_final %>% mutate(immunotherapy= case_when(bcr_patient_barcode %in% immuno_treated_tcga_skcm ~ "Yes",
+                                                             !(bcr_patient_barcode %in% immuno_treated_tcga_skcm) ~ "No")) 
+table(clin_final$immunotherapy)
+
+fit_cox_immuno <- survfit(
+  Surv(DSS.years_censored, DSS_censored) ~ group+ICI,
+  data = dplyr::filter(clin_final, immunotherapy == "Yes")
+)
+
+names(fit_cox_immuno$strata) <- gsub("group=","", names(fit_cox_immuno$strata))
+clin_final$ICI <- as.factor(clin_final$ICI)
+s_cox_Immuno <- coxph(Surv(DSS.years_censored, DSS_censored) ~ group+ICI, data = dplyr::filter(clin_final, immunotherapy == "Yes"))
+s_cox_Immuno   <- summary(s_cox_Immuno)
+hr     <- s_cox_Immuno$coefficients[, "exp(coef)"]
+ci_lo  <- s_cox_Immuno$conf.int[, "lower .95"]
+ci_hi  <- s_cox_Immuno$conf.int[, "upper .95"]
+pval   <- s_cox_Immuno$coefficients[, "Pr(>|z|)"]
+hr_lab <- sprintf("HR=%.2f (95%% CI %.2f–%.2f)", hr, ci_lo, ci_hi)
+p_lab  <- paste0("p = ", sprintf("%.4f", pval))
+
+#plot dss
+ggsurvfit(fit_cox_immuno, linewidth=0.8)+
+    add_censor_mark() +
+    add_risktable(
+        size            = 7,
+        theme           = theme_risktable_default(plot.title.size  = 15),
+        risktable_stats = "{n.risk} ({cum.event})",
+        stats_label     = "Number at risk",risktable_height = 0.2
+    ) +add_risktable_strata_symbol(symbol = "•", size = 15)+
+    labs(
+        x = "Years",
+        y = paste0("Disease specific survival", " (%)")
+    ) +
+  scale_ggsurvfit(x_scales = list(limits = c(0,15), breaks=seq(0,15, by=3)))+
+    scale_y_continuous(limits = c(0, 1),
+                       labels = scales::percent_format(accuracy = 1),
+                       expand = c(0, 0)) +
+    theme_classic() +
+    theme(
+        plot.title       = element_text(hjust = 0.5, size = 20),
+        plot.subtitle    = element_text(hjust = 0.5, size = 18),
+        axis.title.x     = element_text(size = 20),
+        axis.title.y     = element_text(size = 20, margin = margin(t = 0, r = 0, b = 0, l = 0)),
+        axis.text.x      = element_text(size = 15),
+        axis.text.y      = element_text(size = 15),
+        legend.position  = "top",
+        legend.direction = "vertical",
+        legend.text      = element_text(size = 25),
+        legend.key.size  = unit(30, "bigpts"),
+        legend.title     = element_blank(),
+        plot.margin      = unit(c(0,0.2,0,0), 'lines')
+    )+scale_color_manual(values = c("High, ICI=Yes" = "red", "Low, ICI=Yes" = "blue", "High, ICI=No " = "orange", "Low, ICI=No " = "darkgreen"))+
+  ggplot2::annotate(
+        "text",
+        x     = 0,
+        y     = 0.2,
+        label = hr_lab,
+        size  = 10,
+        hjust = 0
+      ) +
+      ggplot2::annotate(
+        "text",
+        x     = 0,
+        y     = 0.1,
+        label = p_lab,
+        size  = 10,
+        hjust = 0
+      )
+  
+
+```
+
+## Prognostic vs predictive role of the signature
+```{r}
+#predictive for ici?
+clin_tmp <- clin_final |>
+    dplyr::mutate(
+        ICI_bin = factor(ICI, levels = c("No","Yes")),   # ensure consistent ref
+        sig_z   = as.numeric(scale(signature_score))                # z-score helps stability
+    )
+
+m_no_int <- coxph(
+    Surv(DSS.years_censored, DSS_censored) ~ sig_z + immunotherapy,
+    data = clin_tmp
+)
+
+m_int <- coxph(
+    Surv(DSS.years_censored, DSS_censored) ~ sig_z * immunotherapy,
+    data = clin_tmp
+)
+
+anova(m_no_int, m_int, test = "LRT")   # p-value here = evidence of predictiveness
+summary(m_int)
+cox.zph(m_int)
+#predictive for all immunotherapies?
+clin_tmp <- clin_final |>
+    dplyr::mutate(
+        ICI_bin = factor(ICI, levels = c("No","Yes")),   # ensure consistent ref
+        sig_z   = as.numeric(scale(signature_score))                # z-score helps stability
+    )
+
+m_no_int <- coxph(
+    Surv(DSS.years_censored, DSS_censored) ~ sig_z + immunotherapy,
+    data = clin_tmp
+)
+
+m_int <- coxph(
+    Surv(DSS.years_censored, DSS_censored) ~ sig_z * immunotherapy,
+    data = clin_tmp
+)
+
+anova(m_no_int, m_int, test = "LRT")   # p-value here = evidence of predictiveness
+summary(m_int)
+cox.zph(m_int)
+```
+
+# Multivariate analysis on TCGA-SKCM
+
+
+## Calculate Immune infiltration with ESTIMATE
+
+```{r immune infiltration}
+library(AnnotationDbi)
+library(EnsDb.Hsapiens.v86)
+library(IOBR)
+
+# TPM from RPKM
+tpm_mat_skcm <- t( t(fpkm.mat_skcm) / colSums(as.matrix(fpkm.mat_skcm),na.rm = T) * 1e6 )
+tpm_log2_skcm <- log2(tpm_mat_skcm + 1)
+#Conversion to HGNC gene names
+ens <- rownames(tpm_log2_skcm)
+
+sym <- mapIds(
+  EnsDb.Hsapiens.v86,
+  keys     = ens,
+  keytype  = "GENEID",
+  column   = "SYMBOL",
+  multiVals = "first"
+)
+
+keep <- !is.na(sym) & sym != ""
+tpm_log2_skcm <- tpm_log2_skcm[keep, , drop = FALSE]
+rownames(tpm_log2_skcm) <- sym[keep]
+
+dup <- duplicated(rownames(tpm_log2_skcm))
+if (any(dup)) {
+  o <- order(rownames(tpm_log2_skcm), rowMeans(tpm_log2_skcm), decreasing = TRUE)
+  tpm_log2_skcm <- tpm_log2_skcm[o, ]
+  tpm_log2_skcm <- tpm_log2_skcm[!duplicated(rownames(tpm_log2_skcm)), ]
+}
+
+#IOBR deconvolution
+estimate_res_skcm <- IOBR::deconvo_tme(eset = tpm_log2_skcm, method = "estimate")
+estimate_res_skcm_backup=estimate_res_skcm
+
+#store immune score in a column in the clinical data
+estimate_res_skcm <- subset(estimate_res_skcm, ID %in% clin_final$sample)
+# assuming clin_final$sample are your sample IDs:
+clin_final$immune_score <- estimate_res_skcm$ImmuneScore_estimate[
+  match(clin_final$sample, estimate_res_skcm$ID)
+]
+```
+
+### Sensitivity: Fit signature score as a continuous covariate
+
+```{r, fig.width=10, fig.height=5}
+#multiple cox
+library(survival)
+library(survminer)
+
+clin_final$score_z <- scale(clin_final$signature_score)
+
+univ_cox <- coxph(
+  Surv(DSS.time, DSS) ~ score_z,
+  data = clin_final
+)
+summary(univ_cox)
+
+
+# 1) Recode age into <60 vs ≥60, and AJCC stage into 0‑2 / 3 / 4
+clin_final2 <- clin_final %>%
+  mutate(
+    age_group = if_else(age_at_diagnosis/365 < 40, "<40", "≥40"),
+    stage_group = case_when(
+      ajcc_pathologic_tumor_stage %in% c("Stage 0", "I/II NOS",
+                                   "Stage I","Stage IA","Stage IB",
+                                   "Stage II","Stage IIA","Stage IIB","Stage IIC")
+      ~ "0/I/II",
+      ajcc_pathologic_tumor_stage %in% c("Stage III","Stage IIIA","Stage IIIB","Stage IIIC")
+      ~ "III",
+      ajcc_pathologic_tumor_stage == "Stage IV" 
+      ~ "IV",
+      TRUE ~ NA_character_
+    ),
+    Immune_infiltrate = if_else(condition = (immune_score >= quantile(immune_score, 0.75)),
+                            "High","Low")
+  ) %>%
+  mutate(
+    age_group   = factor(age_group,   levels=c("<40","≥40")),
+    stage_group = factor(stage_group, levels=c("0/I/II","III","IV")),
+    Immune_infiltrate = factor(Immune_infiltrate, levels = c("Low", "High")),
+    Sex = as.factor(gender)
+  ) %>%
+  dplyr::filter(!is.na(age_group) & !is.na(stage_group))
+
+multiv_cox <- coxph(
+  Surv(DSS.time, DSS) ~ score_z + Immune_infiltrate + age_group + Sex + stage_group,
+  data = clin_final2
+)
+summary(multiv_cox)
+```
+
+
+### Multivariate with dichotomized cohort
+
+```{r, fig.width=10, fig.height=5}
+clin_final2$group <- as.factor(clin_final2$group)
+clin_final2$group <- relevel(clin_final2$group, ref = "Low")
+
+cox_mod <- coxph(
+  Surv(DSS.years_censored, DSS_censored) ~ 
+    group     + 
+    Immune_infiltrate +
+    age_group   + 
+    Sex      + 
+    stage_group,
+  data = clin_final2
+)
+
+summary(cox_mod)
+ggforest(cox_mod, data=clin_final2, main = "DSS")
+
+cox_mod_OS <- coxph(
+  Surv(OS.years_censored, OS_censored) ~ 
+    group     + 
+    Immune_infiltrate +
+    age_group   + 
+    Sex      + 
+    stage_group,
+  data = clin_final2
+)
+
+summary(cox_mod_OS)
+ggforest(cox_mod_OS, data=clin_final2, main = "OS")
+
+cox_mod_PFS <- coxph(
+  Surv(PFI.years_censored, PFI_censored) ~ 
+    group     + 
+    Immune_infiltrate +
+    age_group   + 
+    Sex      + 
+    stage_group,
+  data = clin_final2
+)
+
+summary(cox_mod_PFS)
+ggforest(cox_mod_PFS, data=clin_final2, main = "PFS")
+```
+
+## Association with TMB
+```{r}
+# query <- GDCquery(project = "TCGA-SKCM",
+#                   data.category = "Simple Nucleotide Variation",
+#                   data.type     = "Masked Somatic Mutation"
+#                   )
+# GDCdownload(query = query, directory = "../controlled_data/GDCdata/")
+# maf_sckm <- GDCprepare(query, directory = "../controlled_data/GDCdata")
+load("../controlled_data/GDCdata/TCGA-SKCM/maf_skcm.RData")
+total_muts <- as.data.frame(table(maf_sckm$Tumor_Sample_Barcode))
+
+colnames(total_muts) <- c("Tumor_Sample_Barcode", "Mutations")
+
+total_muts$bcr_patient_barcode  <- TCGAutils::TCGAbarcode(as.character(total_muts$Tumor_Sample_Barcode),participant = T)
+
+clin_final3 <-merge(clin_final2, total_muts,by = "bcr_patient_barcode") 
+clin_final3$TMB <- as.factor(ifelse(clin_final3$Mutations < quantile(clin_final3$Mutations, 0.5), "Low", "High"))
+clin_final3$TMB <- relevel(clin_final3$TMB, ref = "Low")
+cox_mod <- coxph(
+  Surv(DSS.years_censored, DSS_censored) ~ 
+    group     + 
+    TMB +
+    Immune_infiltrate +
+    age_group   + 
+    Sex      + 
+    stage_group,
+  data = clin_final3
+)
+
+# 3) Summarize and plot
+summary(cox_mod)
+ggforest(cox_mod, data=clin_final3)
+```
+
+
+## Baseline characteristics according to HLA group
+```{r baseline char - hla group}
+library(compareGroups)
+
+df <- clin_final2 %>%
+  transmute(group,
+            is_primary = case_when(
+              definition == "Primary solid Tumor" ~ "Primary",
+              definition %in% c("not reported", NA) ~ NA_character_,
+              definition == "Metastatic" ~ "Metastatic"
+            )) %>%
+  dplyr::filter(!is.na(is_primary), !is.na(group))
+
+tab <- table(df$group, df$is_primary)
+tab
+
+# Fisher's exact (robust for small counts)
+ft <- fisher.test(tab)
+ft
+
+# Also show proportions by group
+prop_tbl <- prop.table(tab, margin = 1) %>% round(3)
+prop_tbl
+
+#GLM to make adjusted comparison
+addmargins(tab)
+prop.table(tab, 1)
+
+# risk difference (absolute difference in proportions)
+rd <- prop_tbl["High","Metastatic"] - prop_tbl["Low","Metastatic"]  # High - Low
+rd  # ≈ -0.116  (≈ –11.6 percentage points)
+
+# Phi coefficient (effect size for 2x2)
+phi <- psych::phi(tab)  # needs psych package
+phi
+
+library(binom)
+prop_df <- df %>%
+  dplyr::count(group, is_primary) %>%
+  pivot_wider(names_from = is_primary, values_from = n, values_fill = 0) %>%
+  dplyr::rename(Metastatic = `Metastatic`, Primary = `Primary`) %>%
+  mutate(n = Metastatic + Primary) %>%
+  rowwise() %>%
+  mutate(binom = list(binom.confint(x = Metastatic, n = n, methods = "wilson"))) %>%
+  unnest(binom, names_sep = "_") %>%      # <-- avoids name collision
+  transmute(group,
+            p   = binom_mean,                   # from binom_*
+            lwr = binom_lower,
+            upr = binom_upper,
+            n)
+
+# y-position for the bracket (slightly above the tallest CI bar)
+y_bracket <- max(prop_df$upr) * 1.08
+
+# Build the p-value data frame for ggpubr
+pdat <- data.frame(
+  group1 = "Low",
+  group2 = "High",
+  y.position = y_bracket,
+  p = ft$p.value,
+  p.signif = symnum(ft$p.value, corr = FALSE, na = FALSE,
+                    cutpoints = c(0, .001, .01, .05, .1, 1),
+                    symbols = c("***","**","*",".","ns"))
+)
+
+ggplot(prop_df, aes(group, p, fill = group)) +
+  geom_col(width = .6, color = "grey20") +
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = .15, linewidth = .6) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1),
+                     limits = c(0, max(prop_df$upr)*1.2)) +
+  scale_fill_manual(values = c(Low = "#0384fc", High = "red")) +
+  labs(title = "Proportion of Metastatic tumors by group",
+       x = NULL, y = "Primary (proportion)") +
+  theme_classic() + theme(legend.position = "none") +
+  ggpubr::stat_pvalue_manual(pdat, label = "p.signif", tip.length = 0.01)
+
+
+```
+
+## Larger multivariate model (immune infiltration, CIITA, and single HLA-II isotypes)
+
+```{r,  fig.width=10, fig.height=5}
+# Test with Immune infiltration, CIITA, HLA-DRA, HLA-DP, HLA-DQ
+###HLA-DR
+grep("HLA-DR", rownames(rank_data), value=T)
+# compute simple singscore
+scores <- simpleScore(rank_data,
+                      upSet   = unique(grep("HLA-DR", rownames(rank_data), value=T)))
+rownames(scores) <- gsub(x= rownames(scores), pattern = "\\.", replacement = "-")
+scores$sample <- rownames(scores)
+scores <- subset(scores, sample %in% clin_final$sample)
+
+clin_final$HLADR_score <- scores$TotalScore[
+  match(clin_final$sample, scores$sample)
+]
+###HLA-DQ
+scores <- simpleScore(rank_data,
+                      upSet   = unique(grep("HLA-DQ", rownames(rank_data), value = T)))
+rownames(scores) <- gsub(x= rownames(scores), pattern = "\\.", replacement = "-")
+scores$sample <- rownames(scores)
+scores <- subset(scores, sample %in% clin_final$sample)
+
+clin_final$HLADQ_score <- scores$TotalScore[
+  match(clin_final$sample, scores$sample)
+]
+###HLA-DP
+scores <- simpleScore(rank_data,
+                      upSet   = unique(grep("HLA-DP", rownames(rank_data), value = T)))
+rownames(scores) <- gsub(x= rownames(scores), pattern = "\\.", replacement = "-")
+scores$sample <- rownames(scores)
+scores <- subset(scores, sample %in% clin_final$sample)
+
+clin_final$HLADP_score <- scores$TotalScore[
+  match(clin_final$sample, scores$sample)
+]
+
+###HLA-DP
+scores <- simpleScore(rank_data,
+                      upSet   = unique(grep("CIITA", rownames(rank_data), value = T)))
+rownames(scores) <- gsub(x= rownames(scores), pattern = "\\.", replacement = "-")
+scores$sample <- rownames(scores)
+scores <- subset(scores, sample %in% clin_final$sample)
+
+clin_final$CIITA_score <- scores$TotalScore[
+  match(clin_final$sample, scores$sample)
+]
+
+clin_final <- clin_final %>%
+  mutate(group_DR = if_else(HLADR_score >= 
+                           quantile(HLADR_score, 0.75),
+                         "High","Low"))
+clin_final <- clin_final %>%
+  mutate(group_DP = if_else(HLADP_score >= 
+                           quantile(HLADP_score, 0.75),
+                         "High","Low"))
+clin_final <- clin_final %>%
+  mutate(group_DQ = if_else(HLADQ_score >= 
+                           quantile(HLADQ_score, 0.75),
+                         "High","Low"))
+
+clin_final <- clin_final %>%
+  mutate(CIITA_group = if_else(CIITA_score >= 
+                              quantile(CIITA_score, 0.75),
+                            "High","Low"))
+clin_final <- clin_final %>%
+  mutate(Immune_infiltrate = if_else(immune_score >= 
+                              quantile(immune_score, 0.75),
+                            "High","Low"))
+
+fit <- survfit(
+  Surv(DSS.years_censored, DSS_censored) ~ Immune_infiltrate,
+  data = clin_final
+)
+
+# Plot DSS for immune infiltration groups
+ggsurvplot(
+  fit,
+  data       = clin_final,
+  pval       = TRUE,
+  risk.table = TRUE,
+) + labs(
+  title="Survival in Immune infiltration groups"
+)
+
+clin_final2$HLA_const <- as.factor(clin_final2$group)
+clin_final2$HLA_const <- relevel(clin_final2$HLA_const, ref = "Low")
+clin_final2$group_DR <- as.factor(clin_final2$group_DR)
+clin_final2$group_DR <- relevel(clin_final2$group_DR, ref = "Low")
+clin_final2$group_DP <- as.factor(clin_final2$group_DP)
+clin_final2$group_DP <- relevel(clin_final2$group_DP, ref = "Low")
+clin_final2$group_DQ <- as.factor(clin_final2$group_DQ)
+clin_final2$group_DQ <- relevel(clin_final2$group_DQ, ref = "Low")
+clin_final2$Immune_infiltrate <- as.factor(clin_final2$Immune_infiltrate)
+clin_final2$Immune_infiltrate <- relevel(clin_final2$Immune_infiltrate, ref = "Low")
+# clin_final2$Sex <- as.factor(clin_final2$Sex)
+# clin_final2$Sex <- relevel(clin_final2$Sex, ref = "MALE")
+clin_final2$CIITA_group <- as.factor(clin_final2$CIITA_group)
+clin_final2$CIITA_group <- relevel(clin_final2$CIITA_group, ref = "Low")
+
+# Fit the Cox model with the new categorical vars
+cox_mod <- coxph(
+  Surv(DSS.years_censored, DSS_censored) ~ 
+    HLA_const     + 
+    Immune_infiltrate +
+    Age_group   + 
+    Sex      + 
+    Stage_group,
+  data = clin_final2
+)
+
+# Summarize and plot
+summary(cox_mod)
+ggforest(cox_mod, data=clin_final2, main = "Multivariate Cox - HLACONST+ and Immune infiltrate")
+
+# Check proportional‑hazards assumption
+cox.zph(cox_mod)
+
+# Fit the Cox model with the new categorical vars
+cox_mod_CIITA <- coxph(
+  Surv(DSS.years_censored, DSS_censored) ~ 
+    HLA_const     + 
+    Immune_infiltrate +
+    CIITA_group +
+    Age_group   + 
+    Sex      + 
+    Stage_group,
+  data = clin_final2
+)
+
+# Summarize and plot
+summary(cox_mod_CIITA)
+ggforest(cox_mod_CIITA, data=clin_final2, main = "Multivariate Cox - Complete model")
+
+cox_mod_complete <- coxph(
+  Surv(DSS.years_censored, DSS_censored) ~ 
+    HLA_const     + 
+    Immune_infiltrate +
+    CIITA_group +
+    group_DR+
+    group_DP+
+    group_DQ+
+    Age_group   + 
+    Sex      + 
+    Stage_group,
+  data = clin_final2
+)
+
+# Summarize and plot
+summary(cox_mod_complete)
+ggforest(cox_mod_complete, data=clin_final2, main = "Multivariate Cox - Complete model")
+
+# Check proportional‑hazards assumption
+cox.zph(cox_mod_complete)
+
+# show collinearity between immune infiltrate, CIITA and HLAs - simple correlations
+vars <- c("score_z","immune_score","CIITA_score","HLADR_score","HLADP_score","HLADQ_score","age_at_diagnosis")
+M <- clin_final[, vars]
+colnames(M) <- c("Normalized HLA-II score", "Immune infiltrate", "CIITA expression", "HLA-DR expression", "HLA-DP expression", "HLA-DQ expression", "Age")
+cors <- cor(M, use="pairwise.complete.obs", method="spearman")
+cors
+
+corrplot::corrplot(
+  cors,
+  method = "color",
+  type = "upper",
+  order = "hclust",
+  addCoef.col = "black",
+  tl.col = "black",
+  col = colorRampPalette(c("navy", "white", "firebrick3"))(200),
+  tl.srt = 45,
+  diag = T
+)
+
+
+# collinearity in the design matrix
+X <- model.matrix(cox_mod_complete)
+X <- X[, colnames(X) != "(Intercept)", drop=FALSE]
+
+# Remove columns with zero variance (can happen with sparse factor levels)
+X <- X[, apply(X, 2, sd, na.rm=TRUE) > 0, drop=FALSE]
+
+# Correlation matrix among columns
+R <- cor(X, use="pairwise.complete.obs")
+
+# VIF = diagonal of inverse correlation matrix
+VIF <- diag(solve(R))
+sort(VIF, decreasing = TRUE)
+```
+
+## Compare the different models (Exploratory, not included)
+
+```{r}
+library(survival)
+library(broom)
+library(dplyr)
+library(ggplot2)
+library(forcats)
+
+
+# --- keep the same adjustments you were using
+controls <- c("Age_group","Sex","Stage_group")
+
+mk_mod <- function(rhs_vars) {
+  rhs <- paste(c(rhs_vars, controls), collapse = " + ")
+  coxph(as.formula(paste("Surv(DSS.years_censored, DSS_censored) ~", rhs)),
+        data = clin_final2)
+}
+
+# --- your 4 models
+mods <- list(
+  "HLA+Immune infiltrate"        = mk_mod(c("HLA_const","Immune_infiltrate")),
+  "HLA+CIITA"      = mk_mod(c("HLA_const","CIITA_group")),
+  "Immune infiltrate+CIITA"      = mk_mod(c("Immune_infiltrate","CIITA_group")),
+  "HLA+Immune infiltrate+CIITA"  = mk_mod(c("HLA_const","Immune_infiltrate","CIITA_group"))
+)
+
+# --- build a mapping of the term names used in the model for each variable
+
+target_vars <- c("HLA_const","Immune_infiltrate","CIITA_group")
+pretty_var  <- c(HLA_const="HLA Const+",
+                 Immune_infiltrate="Immune infiltration",
+                 CIITA_group="CIITA")
+
+var_map <- bind_rows(lapply(target_vars, function(v){
+  x <- clin_final2[[v]]
+  if(!is.factor(x) || length(levels(x)) < 2)
+    stop(sprintf("%s should be a 2+ level factor with first level = reference", v))
+  ref  <- levels(x)[1]
+  alt  <- levels(x)[2]              
+  tibble(
+    variable = v,
+    term     = paste0(v, alt),      
+    label    = sprintf("%s (%s vs %s)", pretty_var[[v]], alt, ref)
+  )
+}))
+
+# --- tidy all models and keep only the 3 variables of interest
+td <- bind_rows(lapply(names(mods), function(mn)
+  broom::tidy(mods[[mn]], conf.int = TRUE, exponentiate = TRUE) |>
+    mutate(model = mn)
+)) |>
+  inner_join(var_map, by = "term") |>
+  transmute(
+    var   = factor(label,
+                   levels = sprintf("%s (%s vs %s)",
+                                    pretty_var[target_vars],
+                                    levels(clin_final2[[target_vars[1]]])[2],  
+                                    levels(clin_final2[[target_vars[1]]])[1])),
+    model = factor(model, levels = c("HLA+Immune infiltrate","HLA+CIITA","Immune infiltrate+CIITA","HLA+Immune infiltrate+CIITA")),
+    HR    = estimate, lo = conf.low, hi = conf.high, p = p.value
+  ) |>
+  mutate(sig = p < 0.05)
+
+# --- guard against zeros on log scale
+td <- dplyr::filter(td, HR > 0, lo > 0, hi > 0)
+
+# dynamic x-limits (log scale)
+x_breaks <- c(0.25, 0.5, 1, 2, 4, 8)
+x_min <- max(min(td$lo, na.rm = TRUE) * 0.8, min(x_breaks))
+x_max <- max(td$hi, na.rm = TRUE) * 1.2
+
+# --- horizontal comparison forest (one facet per variable)
+ggplot(td, aes(y = model)) +
+  facet_grid(var ~ ., switch = "y") +
+  ggplot2::annotate("rect", xmin = x_min, xmax = 1, ymin = -Inf, ymax = Inf, alpha = 0.06) +
+  geom_vline(xintercept = 1, linetype = 2) +
+  geom_segment(aes(x = lo, xend = hi, yend = model, color = model), linewidth = 0.9) +
+  geom_point(aes(x = HR, color = model, fill = sig, shape = sig), size = 2.8) +
+  scale_shape_manual(values = c(`TRUE` = 21, `FALSE` = 21), guide = "none") +
+  scale_fill_manual(values  = c(`TRUE` = "black", `FALSE` = NA), guide = "none") +
+  labs(x = "Hazard ratio (log scale)", y = NULL,
+       title = "Key covariates across models") +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_blank(),
+        strip.placement = "outside",
+        strip.text.y.left = element_text(angle = 0, hjust = 1),
+        legend.position = "right")
+
+mod_base <- mods[["HLA+Immune infiltrate"]]
+mod_full <- mods[["HLA+Immune infiltrate+CIITA"]]
+
+lr <- anova(mod_base, mod_full, test = "LRT")
+lr_df <- as.data.frame(lr, stringsAsFactors = FALSE)
+
+# Find columns safely
+chi_col <- grep("Chisq", names(lr_df), value = TRUE)[1]
+p_col   <- grep("^Pr\\(", names(lr_df), value = TRUE)[1]  # matches "Pr(>|Chi|)"
+df_col  <- grep("^Df$",  names(lr_df), value = TRUE)[1]
+
+chi   <- as.numeric(lr_df[[chi_col]][2])
+p_LRT <- as.numeric(lr_df[[p_col]][2])
+df_dx <- as.integer(lr_df[[df_col]][2])
+
+ll_base <- as.numeric(logLik(mod_base))
+ll_full <- as.numeric(logLik(mod_full))
+df_base <- attr(logLik(mod_base), "df")
+df_full <- attr(logLik(mod_full), "df")
+
+chi   <- 2 * (ll_full - ll_base)
+df_dx <- df_full - df_base
+p_LRT <- pchisq(chi, df = df_dx, lower.tail = FALSE)
+
+cap <- sprintf("Adding CIITA to HLA+Immune_infiltrate does not improve fit (LRT Δχ²=%.2f, df=%d, p=%s).",
+               chi, df_dx,
+               ifelse(p_LRT < 0.001, "<0.001", formatC(p_LRT, format="f", digits=3)))
+cap
+```
+
+## Compare different HLA-II isotypes 
+
+```{r}
+# Terms to keep (adjust if your term names differ)
+keep_terms <- c("group_DRHigh", "group_DPHigh", "group_DQHigh")
+
+td <- broom::tidy(cox_mod_complete, exponentiate = TRUE, conf.int = TRUE) %>%
+  dplyr::filter(term %in% keep_terms) %>%
+  dplyr::mutate(
+    isotype = case_when(
+      term == "group_DRHigh" ~ "HLA-DR (High vs Low)",
+      term == "group_DPHigh" ~ "HLA-DP (High vs Low)",
+      term == "group_DQHigh" ~ "HLA-DQ (High vs Low)",
+      TRUE ~ term
+    ),
+    # Optional: significance label
+    p_label = case_when(
+      p.value < 0.001 ~ "p<0.001",
+      p.value < 0.01  ~ "p<0.01",
+      p.value < 0.05  ~ "p<0.05",
+      TRUE            ~ paste0("p=", formatC(p.value, digits = 2, format = "f"))
+    )
+  ) %>%
+  # Put DR on top
+  dplyr::mutate(isotype = factor(isotype, levels = c("HLA-DR (High vs Low)",
+                                             "HLA-DP (High vs Low)",
+                                             "HLA-DQ (High vs Low)"))) %>%
+  dplyr::arrange(isotype)
+
+# Choose x-limits that look nice for your effect sizes
+xlims <- c(0.2, 2.5)
+
+p <- ggplot(td, aes(x = estimate, y = isotype)) +
+  geom_vline(xintercept = 1, linetype = 2) +
+  geom_pointrange(aes(xmin = conf.low, xmax = conf.high), linewidth = 0.6) +
+  scale_x_log10(limits = xlims) +
+  labs(
+    x = "Hazard ratio (log scale)",
+    y = NULL,
+    title = "HLA-II isotype groups (multivariable Cox model)",
+    subtitle = "Points = HR; bars = 95% CI"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    plot.title.position = "plot",
+    axis.text.y = element_text(size = 11)
+  ) +
+  # p-value text on the right side of each row (optional)
+  geom_text(
+    aes(x = xlims[2], label = p_label),
+    hjust = 1, size = 3.5
+  )
+
+p
+
+```
+
+# DE between HLA-II groups in TCGA
+
+## DE
+```{r, eval=T}
+#change IDs into gene names
+hugo <- mapIds(
+  org.Hs.eg.db,
+  keys      = rownames(counts_mel),
+  column    = "SYMBOL",
+  keytype   = "ENSEMBL",
+  multiVals = "first"
+)
+
+# 3. Subset out NAs and rename
+keep <- !is.na(hugo)
+counts_hugo <- counts_mel[keep, , drop=FALSE]
+rownames(counts_hugo) <- hugo[keep]
+
+rownames(counts_hugo)[which(duplicated(rownames(counts_hugo)))]
+
+dds_all <- DESeqDataSetFromMatrix(countData = counts_hugo[, clin_final$barcode],
+                              colData = subset(clin_final, barcode %in% colnames(counts_hugo)),
+                              design = ~ group + Immune_infiltrate)
+dds_all$group <- dds_all$group %>% relevel(ref = "Low")
+keep <- rowSums(counts(dds_all)) >= 10
+dds_all <- dds_all[keep,]
+dds_all <- DESeq(dds_all)
+plotCounts(dds_all, gene="CIITA", intgroup="group")
+
+SKCM_all_results_filter <- as.data.frame(results(dds_all,cooksCutoff = T, name = "group_High_vs_Low")) %>% 
+  dplyr::filter(baseMean >3000)
+library(ggrepel)
+SKCM_all_results_filter$gene <- rownames(SKCM_all_results_filter)
+ggplot(SKCM_all_results_filter, aes(x = log2FoldChange, y = -log10(padj))) +
+  geom_point(aes(color = ifelse(padj < 0.01 & abs(log2FoldChange) > 2, "significant", "non-significant")), alpha = 0.6, size=3) +
+  geom_text_repel(
+    aes(label = ifelse(padj < 0.01 & abs(log2FoldChange) > 2, as.character(gene), "")),
+    size = 5,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.5, "lines")
+  ) +
+  theme_minimal() +
+  labs(title = "SKCM dataset - MHCII+ vs MHCII-",
+       x = "Log2 Fold Change",
+       y = "-log10(p-value)",
+       color = "Gene Significance") +
+  scale_color_manual(values = c("grey", "red"))
+```
+
+## GSEA
+```{r, eval=T}
+gene_list_skcm <- SKCM_all_results_filter$log2FoldChange
+names(gene_list_skcm) <- SKCM_all_results_filter$gene
+gene_list_skcm <- sort(gene_list_skcm, decreasing = TRUE)
+
+msigdb_hallmark <- msigdbr(species = "Homo sapiens", category = "H")
+msigdb_hallmark_list <- msigdb_hallmark[, c("gs_name", "gene_symbol")]
+
+gsea_results_skcm <- GSEA(
+  geneList = gene_list_skcm,           # Ranked gene list
+  TERM2GENE = msigdb_hallmark_list,          # Hallmark gene sets in the correct format
+  pvalueCutoff = 0.5,            # P-value cutoff for significance
+  minGSSize = 10,                 # Minimum gene set size
+  maxGSSize = 500,                # Maximum gene set size
+  verbose = TRUE
+)
+
+gsea_results_skcm@result$ID <- sub("HALLMARK_", replacement = "", x = gsea_results_skcm@result$ID)
+gsea_results_skcm@result$regulation <- ifelse(gsea_results_skcm@result$NES > 0, "Upregulated", "Downregulated")
+ggplot(subset(gsea_results_skcm@result,p.adjust<0.05), aes(x = reorder(ID, NES), y = NES)) +
+  geom_bar(stat = "identity", aes(fill = regulation), width = 0.8) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "black") +
+  scale_fill_manual(values = c("Upregulated" = "red", "Downregulated" = "blue")) +
+  coord_flip() +  # Flip coordinates for better readability (pathways on the y-axis)
+  theme_minimal() +
+  labs(title = "GSEA Waterfall Plot - HLA+ vs HLA-",
+       x = "Pathway",
+       y = "Normalized Enrichment Score (NES)",
+       fill = "Regulation") +
+  theme(axis.text.y = element_text(size = 10, face = "bold"))  
+
+#performing progeny analysis as in the tcl data
+allgenes <- unique(rownames(vst(dds_all)))
+HLA_DR_genes <- grep("^HLA-DR", allgenes, value = T)
+HLA_DP_genes <- grep("^HLA-DP", allgenes, value = T)
+HLA_DQ_genes <- grep("^HLA-DQ", allgenes, value = T)
+HLA_DO_genes <- grep("^HLA-DO", allgenes, value = T)
+HLA_DM_genes <- grep("^HLA-DM", allgenes, value = T)
+HLAII_genes <- unique(c("CIITA", "CD74", HLA_DR_genes,HLA_DP_genes,HLA_DQ_genes,HLA_DO_genes,HLA_DM_genes))
+expr_skcm_norm <- assay(vst(dds_all))
+expr_skcm_norm <- expr_skcm_norm[!(rownames(expr_skcm_norm) %in% HLAII_genes), , drop = FALSE]
+
+activ_path <- progeny(expr_skcm_norm,
+                    scale = TRUE,
+                    organism = "Human",
+                    top = 500,          # try 100–500 in sensitivity checks
+                    perm = 300,           # no permutation; we’ll test with limma
+                    return_assay = TRUE)
+
+
+# 2) Differential pathway activity: HLA_high vs HLA_low (adjust for dataset)
+clin_progeny = subset(clin_final, barcode %in% colnames(counts_hugo))
+clin_progeny$group <- relevel(as.factor(clin_progeny$group),ref = "Low")
+design <- model.matrix(~ group, data = clin_progeny)
+fit <- lmFit(t(activ_path), design)            # pathways × samples -> transpose to samples × pathways
+fit <- eBayes(fit)
+progeny_res_skcm <- topTable(fit, coef = "groupHigh", number = Inf) %>%
+  tibble::rownames_to_column("Pathway")
+
+sig_skcm <- progeny_res_skcm %>% dplyr::filter(adj.P.Val < 0.05)
+# logFC > 0 => higher activity in HLA_high
+ggplot(sig_skcm, aes(x = reorder(Pathway, logFC), y = logFC, fill = logFC > 0)) +
+  geom_col() + coord_flip() +
+  scale_fill_manual(values = c(`TRUE` = "red", `FALSE` = "blue"), guide = "none") +
+  labs(x = "Pathway", y = "Activity (logFC)", title = "PROGENy pathway activity: HLA+ vs HLA−")
+
+```
+
+# Test dedifferentiation status vs signature in TCGA-SKCM (Exploratory, not included)
+
+```{r, eval=T}
+#check differentiation status on the TCGA biopsies
+
+expr_mat <- as.matrix(assay(vst(dds_all)))
+mode(expr_mat) <- "numeric"
+# load gene sets and convert to list
+
+melanoma_dediff <- read.csv("../public/Melanoma_dediff_gene_set.csv",
+                            header = TRUE, stringsAsFactors = FALSE)
+
+# Try to standardize column names
+if (!all(c("term","gene") %in% names(melanoma_dediff))) {
+  if (ncol(melanoma_dediff) >= 2) {
+    colnames(melanoma_dediff)[1:2] <- c("gene","term")
+    melanoma_dediff <- melanoma_dediff[, c("term","gene")]
+  }
+}
+
+# Make a TERM -> vector-of-genes list
+melanoma_sets <- split(melanoma_dediff$gene, melanoma_dediff$term)
+
+# Keep only genes present in expr
+genes_in_expr <- rownames(expr_skcm)
+melanoma_sets <- lapply(melanoma_sets, function(g) intersect(unique(g), genes_in_expr))
+
+# Drop any empty sets (no overlap)
+melanoma_sets <- melanoma_sets[lengths(melanoma_sets) > 0]
+
+# run ssGSEA with GSVA
+
+# (Optional) de-duplicate genes if needed (keep the most variable probe/gene)
+if (any(duplicated(rownames(expr_mat)))) {
+  expr_mat <- expr_mat[!duplicated(rownames(expr_mat)), ]
+}
+
+gsparam <- ssgseaParam(exprData = expr_mat, geneSets = melanoma_sets)
+ssgsea_scores <- GSVA::gsva(param = gsparam,verbose = TRUE)
+
+# ssgsea_scores: matrix [pathways x samples]
+
+# ---- 3) heatmap of ssGSEA scores per sample/cell line ----
+
+preferred_order <- c("Melanocytic", "Transitory", "Neural_crest-like", "Undifferentiated")
+row_order <- intersect(preferred_order, rownames(ssgsea_scores))
+other_rows <- setdiff(rownames(ssgsea_scores), row_order)
+ssgsea_scores <- ssgsea_scores[c(row_order, sort(other_rows)), , drop = FALSE]
+
+# Row-scale to emphasize variation across samples (nice for visualization)
+ssgsea_z <- t(scale(t(ssgsea_scores)))   # z-score per gene set (row)
+
+# If you have sample annotations (e.g., cell line, HLA status), add here:
+# sample_annot <- data.frame(
+#   CellLine = ...,   # a vector named by colnames(expr_mat)
+#   HLAclass = ...
+# )
+# rownames(sample_annot) <- colnames(ssgsea_z)
+annots <- clin_final$group
+names(annots) <- clin_final$sample
+ann_colors <- list(
+  HLA_status = c(
+    Low        = "#0384fc",
+    High   = "red"
+  )
+)
+
+levels4 <- c("Low", "High")  
+annot_df <- data.frame(
+  HLA_status = factor(annots[colnames(ssgsea_z)], levels = levels4)
+)
+rownames(annot_df) <- colnames(ssgsea_z)
+
+pheatmap(ssgsea_z,
+         clustering_distance_rows = "euclidean",
+         clustering_distance_cols = "euclidean",
+         clustering_method = "complete",
+         scale = "none",cutree_cols = 2,
+         border_color = NA,color = viridis::inferno(100),
+         main = "Enrichment of melanoma differentiation stages", annotation_col = annot_df,annotation_colors =ann_colors, 
+         # annotation_col = sample_annot,   # uncomment if you created sample_annot
+         fontsize_row = 10,
+         fontsize_col = 8, show_colnames = F)
+
+stopifnot(identical(rownames(annot_df), colnames(ssgsea_scores)))
+grp <- droplevels(annot_df$HLA_status)          # e.g., c("Low","High")
+
+# ---- 1) group means (pathways x groups) ----
+G <- model.matrix(~ 0 + grp)                    # samples x groups (0/1)
+colnames(G) <- levels(grp)
+G_norm <- sweep(G, 2, colSums(G), "/")          # columns sum to 1
+ssgsea_group_mean <- ssgsea_scores %*% G_norm   # pathways x groups (mean per group)
+
+# ---- 2) row z-score of the group means (what you showed) ----
+ssgsea_group_z <- t(scale(t(ssgsea_group_mean)))
+
+undiff_biopsies <- names(which(ssgsea_scores["Melanocytic",] > ssgsea_group_z["Melanocytic",]))
+
+clin_final$undifferentiated <- ifelse(clin_final$sample %in% undiff_biopsies, "Undifferentiated", "Non-Undifferentiated")
+
+fit_cox <- survfit(
+  Surv(DSS.time, DSS) ~ group,
+  rbind(subset(clin_final, undifferentiated == "Non-Undifferentiated" & group == "Low"),
+               subset(clin_final, group == "High"))
+)
+
+# 5) Plot
+ggsurvplot(
+  fit_cox,
+  data       = clin_final,
+  pval       = TRUE,
+  risk.table = TRUE
+)
+
+#now let's classify each with one state
+states <- c("Melanocytic","Transitory","Neural_crest-like","Undifferentiated")
+stopifnot(all(states %in% rownames(ssgsea_scores)))
+
+# 1) row-z the four state scores (makes them comparable)
+S      <- ssgsea_scores[states, , drop = FALSE]
+S_z    <- t(scale(t(S)))              # rows = states, cols = samples
+
+# 2) seed centroids by a quick max (only to initialize centroids)
+seed_call <- apply(S_z, 2, function(x) states[which.max(x)])
+centroids <- sapply(states, function(st) {
+  idx <- which(seed_call == st)
+  if (length(idx) < 3) {               # fallback if very few seeds
+    # use the theoretical unit basis as a gentle prior
+    u <- rep(0, length(states)); u[match(st, states)] <- 1
+    return(u)
+  }
+  rowMeans(S_z[, idx, drop = FALSE])
+})
+# centroids is 4 (dims) x 4 (states), in the given order
+
+# 3) build a smooth ordered curve through the centroids
+t_knots <- 0:3                             # 0..3 correspond to the ordered states
+sf_list <- lapply(1:4, function(d) splinefun(t_knots, centroids[d, ], method = "natural"))
+curve_point <- function(t) vapply(sf_list, function(f) f(t), numeric(1))  # 4D point on curve
+
+# 4) project each sample onto the curve (find t* minimizing distance)
+proj_tau <- sapply(1:ncol(S_z), function(j) {
+  x <- S_z[, j]
+  f <- function(t) sum((x - curve_point(t))^2)
+  stats::optimize(f, interval = c(0, 3))$minimum
+})
+tau <- proj_tau / 3                       # 0..1 pseudotime along M→T→NC→U
+
+# 5) assign nearest phase; flag near-boundary as Ambiguous
+knots     <- c(0, 1/3, 2/3, 1)
+labels    <- states
+nearest_k <- sapply(tau, function(t) which.min(abs(t - knots)))
+call      <- labels[nearest_k]
+
+# boundary margin (in tau units); 0.05 ≈ “within ~5% of the trajectory”
+margin <- 0.1
+is_boundary <- sapply(tau, function(t) min(abs(t - knots)) < margin)
+call[is_boundary] <- paste0(call[is_boundary], " (ambiguous)")
+
+# results
+tsoi_call <- factor(call, levels = c(paste0(states, " (ambiguous)"), states))
+names(tsoi_call) <- colnames(S_z)
+tsoi_tau  <- setNames(tau, colnames(S_z))
+
+# quick check: counts and ordering
+table(tsoi_call)
+
+# (optional) order samples by tau and plot the 4 rows as a heatmap
+ord <- order(tsoi_tau)
+ann <- data.frame(Tsoi_state = sub(" \\(ambiguous\\)", "", as.character(tsoi_call)))
+rownames(ann) <- names(tsoi_tau)
+
+pheatmap::pheatmap(
+  S_z[, ord, drop = FALSE],
+  cluster_rows = TRUE, cluster_cols = FALSE,
+  gaps_col = cumsum(table(ann$Tsoi_state[ord])),
+  annotation_col = ann,
+  main = "Tsoi states (row-z) ordered by trajectory (tau)",
+  show_colnames = FALSE
+)
+
+
+clin_final$Tsoi_state <- ann$Tsoi_state[match(rownames(ann), clin_final$sample)]
+
+#add also the continuous variable
+clin_final <- clin_final %>% mutate(Melanocytic = S_z["Melanocytic",clin_final$sample ])
+clin_final <- clin_final %>% mutate(Transitory = S_z["Transitory",clin_final$sample ])
+clin_final <- clin_final %>% mutate(Neural_crest_like = S_z["Neural_crest-like",clin_final$sample])
+clin_final <- clin_final %>% mutate(Undifferentiated = S_z["Undifferentiated",clin_final$sample ])
+
+
+states <- c("Melanocytic","Transitory","Neural_crest-like","Undifferentiated")
+S      <- ssgsea_scores[states, , drop = FALSE]
+
+# row-z if you want to equalize dynamic range
+S_z <- t(scale(t(S)))
+
+# Hard call as the max-scoring state
+tsoi_call <- apply(S_z, 2, function(x) states[which.max(x)])
+
+# Optional: "Mixed" if top two are too close
+# tsoi_call2 <- apply(S_z, 2, function(x) {
+#   ord <- order(x, decreasing = TRUE)
+#   if ((x[ord[1]] - x[ord[2]]) < 0.2) return("Mixed")
+#   states[ord[1]]
+# })
+
+
+clin_final$Tsoi_state <- tsoi_call[match(names(tsoi_call), clin_final$sample)]
+```
+
+## Multivariate model with Tsoi states
+
+```{r}
+library(splines)
+#Test with HLA-DRA, HLA-DPA1, HLA-DQA1
+###HLA-DR
+clin_final2$Melanocytic <- clin_final$Melanocytic[match(clin_final2$sample, clin_final$sample)]
+clin_final2$Transitory <- clin_final$Transitory[match(clin_final2$sample, clin_final$sample)]
+clin_final2$Neural_crest_like <- clin_final$Neural_crest_like[match(clin_final2$sample, clin_final$sample)]
+clin_final2$Undifferentiated <- clin_final$Undifferentiated[match(clin_final2$sample, clin_final$sample)]
+
+clin_final2$undifferentiated_score <- clin_final$undifferentiated_score[match(clin_final2$sample, clin_final$sample)]
+
+clin_final2$Tsoi_state <- clin_final$Tsoi_state[match(clin_final2$sample, clin_final$sample)]
+
+clin_final2 <- clin_final2 %>% 
+  dplyr::mutate(Undifferentiated = case_when(
+  Tsoi_state %in% c("Melanocytic", "Transitional", "Neural_crest-like") ~ "No",
+  Tsoi_state %in% c("Undifferentiated") ~ "Yes"
+))
+
+clin_final2$Tsoi_state <- factor(clin_final2$Tsoi_state, levels = c(
+  "Melanocytic", "Transitory", "Neural_crest-like","Undifferentiated")
+)
+
+# 2) Fit the Cox model with the new categorical vars
+cox_mod <- coxph(
+  Surv(DSS.time, DSS) ~ 
+    HLA_const     + 
+    Immune_infiltrate +
+    group_DR +
+    group_DP +
+    group_DQ +
+    Tsoi_state+
+    Age_group   + 
+    Sex      + 
+    Stage_group,
+  data = clin_final2
+)
+
+cox_mod_part <- coxph(
+  Surv(DSS.time, DSS) ~ 
+    HLA_const     + 
+    Immune_infiltrate +
+    Tsoi_state+
+    Age_group   + 
+    Sex      + 
+    Stage_group,
+  data = clin_final2
+)
+summary(cox_mod)
+ggforest(cox_mod, data=clin_final2)
+```
+
+
+# Exploratory analyses on TIL Cohort
+
+## Univariate analysis
+```{r CONST+ score and univariate til, fig.width=15, fig.height=8}
+# compute simple singscore
+scores <- simpleScore(rank_data,
+                      upSet   = up_list,
+                      downSet = down_list)
+rownames(scores) <- gsub(x= rownames(scores), pattern = "\\.", replacement = "-")
+scores$sample <- rownames(scores)
+scores <- subset(scores, sample %in% rownames(TIL_md_full))
+
+clin_final_TIL <- subset(TIL_md_full, sample %in% scores$sample)
+scores <- scores[order(scores$sample, clin_final_TIL$sample),]
+
+clin_final_TIL$signature_score <- scores$TotalScore[
+  match(clin_final_TIL$sample, scores$sample)
+]
+
+stopifnot(!any(is.na(clin_final_TIL$signature_score)))
+
+clin_final_TIL <- clin_final_TIL %>% as.data.frame() %>%
+  dplyr::mutate(group = if_else(signature_score >=
+                           quantile(signature_score, 0.75),
+                         "High","Low"))
+clin_final_TIL <- clin_final_TIL %>% mutate(OS_event= case_when(
+  OS_censored == 1 ~ 0,
+  OS_censored == 0 ~ 1,
+  TRUE ~ NA_integer_
+))
+
+clin_final_TIL <- clin_final_TIL %>% mutate(PFS_event= case_when(
+  PFS_censored == 1 ~ 0,
+  PFS_censored == 0 ~ 1,
+  TRUE ~ NA_integer_
+))
+
+library(survival)
+library(survminer)
+# 4) Fit the survival model in one go, using the data frame
+fit_cox_TIL <- survfit(
+  Surv(OS.months, OS_event) ~ group,
+  data = clin_final_TIL
+)
+
+# 5) Plot
+ ggsurvplot(
+  fit_cox_TIL,
+  data       = clin_final_TIL,
+  pval       = TRUE,
+  risk.table = TRUE
+)
+
+fit <- survfit(
+  Surv(PFS.months, PFS_event) ~ group,
+  data = clin_final_TIL
+)
+
+# 5) Plot
+ggsurvplot(
+  fit,
+  data       = clin_final_TIL,
+  pval       = TRUE,
+  risk.table = TRUE
+)
+
+```
+
+# HLA-IICONST and response correlation in TIL (Exploratory, not included)
+
+```{r,  fig.width=10, fig.height=5}
+library(dplyr)
+
+# 1) Define response
+responders <- c("CR","PR","PR (NED)")
+dat <- clin_final_TIL %>%
+  dplyr::filter(!is.na(BOR)) %>%                       # drop missing outcome
+  mutate(resp = BOR %in% responders,
+         group = factor(group, levels = c("Low","High")))  # Low as reference
+
+# 2) 2x2 table
+tab <- table(dat$group, dat$resp)
+tab
+#           resp
+# group    FALSE TRUE
+#  High        ?    ?
+#  Low         ?    ?
+
+# 3) Fisher's exact test (exact p-value) + odds ratio & 95% CI
+ft <- fisher.test(tab)
+ft
+# ft$estimate is the odds ratio (High vs Low); ft$conf.int is the 95% CI
+
+# 4) Equality of proportions (Wald/chi-square, gives CI for difference)
+prop.test(x = tab[, "TRUE"], n = rowSums(tab), correct = FALSE)
+
+# 5) Unadjusted logistic regression (gives OR for High vs Low)
+m0 <- glm(resp ~ group, family = binomial, data = dat)
+summary(m0)
+cbind(OR = exp(coef(m0)),
+      confint.default(m0) |> exp())            # Wald CI; for small samples prefer exact/Firth
+
+
+# 7) Simple plot: proportion responders with Wilson 95% CI
+library(ggplot2)
+library(Hmisc)  # for binconf()
+pp <- dat %>%
+  group_by(group) %>%
+  summarise(n = n(),
+            r = sum(resp),
+            prop = r / n,
+            ci = list(Hmisc::binconf(r, n, method = "wilson")[1,2:3])) %>%
+  tidyr::unnest_wider(ci, names_sep = "_")
+
+dat <- dat %>% dplyr::mutate(Obj_res=case_when(
+  BOR %in% c("CR", "PR", "PR (NED)") ~ "Response",
+  BOR %in% c("PD", "SD") ~ "No response"
+))
+
+dat <- dat %>%
+  dplyr::filter(!is.na(Obj_res)) %>%
+  mutate(
+    Obj_res = factor(Obj_res, levels = c("No response", "Response"))
+  )
+
+ggplot(dat, aes(x = Obj_res, y = signature_score)) +
+  geom_boxplot(outlier.shape = NA, width = 0.6) +
+  geom_jitter(width = 0.1, alpha = 0.6) +
+  labs(
+    x = NULL,
+    y = "Scaled signature score",
+    title = "Signature score in responders vs non-responders"
+  ) +
+  stat_compare_means(method = "wilcox.test")
+
+
+pp <- dat %>%
+  group_by(group) %>%
+  summarise(
+    n  = n(),
+    r  = sum(resp),
+    prop = r / n,
+    ci = list(Hmisc::binconf(r, n, method = "wilson")[1,2:3])
+  ) %>%
+  tidyr::unnest_wider(ci, names_sep = "_")  # ci_1, ci_2
+
+ggplot(pp, aes(x = group, y = prop)) +
+  geom_col() +
+  geom_errorbar(aes(ymin = ci_Lower, ymax = ci_Upper), width = 0.15) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    x = "Signature group",
+    y = "Response rate",
+    title = "Response rate by signature group (95% Wilson CI)"
+  )
+
+
+#Comparison among TCGA scores and TIL scores
+combined <- bind_rows(
+  clin_final_TIL %>%
+    transmute(sample, signature_score,group, cohort = "TIL"),
+  clin_final2 %>%
+    transmute(sample, signature_score,group, cohort = "TCGA")
+)
+ggplot(combined, aes(x = signature_score, color = cohort)) +
+  geom_density(linewidth = 2) +
+  labs(x = "Signature score",
+       y = "Density",
+       title = "Distribution of signature score in TCGA vs trial")+
+  theme_bw()
+
+
+combined <- combined %>%
+  group_by(cohort) %>%
+  mutate(signature_z = as.numeric(scale(signature_score))) %>%
+  ungroup()
+
+ggplot(combined, aes(x = cohort, y = signature_z, colour = group)) +
+   geom_violin(trim = FALSE) +
+  geom_boxplot(position= position_dodge(0.9),width = 0.2, outlier.shape = NA) +
+  geom_point(position = position_dodge(0.9), alpha = 0.5) +
+  labs(x = NULL,
+       y = "Signature score (z-score within cohort)",
+       title = "Relative distribution of signature score")+
+  geom_hline(yintercept = quantile(combined$signature_z, 0.75))
+
+
+```
+
+# TCR changes in HLA-high vs HLA-low (Exploratory, not included)
+```{r Differences in the TCR repertoire between HLA_II_high and HLA_II_low}
+
+file <- "../controlled_data/TIL/immunarch_TRB/"
+immdata <- repLoad(file)
+
+exp_vol <- repExplore(immdata$data, .method = "volume",.coding = T)
+
+immdata$meta$Patient <- gsub("_", "", immdata$meta$Patient_Raw) 
+immdata$meta$Patient <- gsub("2T1", "", immdata$meta$Patient) 
+immdata$meta$Patient <- gsub("beforeTILs", "", immdata$meta$Patient) 
+immdata$meta$Patient <- gsub("2aftIPIbefTIL", "", immdata$meta$Patient) 
+
+immdata$meta <- immdata$meta %>% left_join(clin_final_TIL, by = "Patient")
+
+vis(exp_vol, .by = c("group"), .meta = immdata$meta)
+```
+
+```{r}
+save(clin_final_TIL, file = "../controlled_data/TIL/clin_final_TIL.R")
+save(clin_final, file = "../controlled_data/TIL/clin_final.R")
+```
+
+
+
+
+
+
+
+
+
+

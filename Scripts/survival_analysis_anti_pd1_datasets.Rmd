@@ -1,0 +1,386 @@
+---
+title: "Survival_analysis_anti_PD1_datasets"
+author: "Mario Presti"
+date: '`r paste("First created on November 2024 Updated on ", format(Sys.Date(), "%d %B %Y"))`'
+output:
+  github_document:
+    toc: true
+    toc_depth: 5
+knit: |
+  (function(inputFile, encoding) {
+    dir.create("../Reports", showWarnings = FALSE)
+    rmarkdown::render(inputFile, encoding = encoding, output_dir = "../Reports")
+  })
+---
+
+# Setup
+
+```{r setup, include=FALSE}
+
+library(dplyr)
+library(tibble)
+
+if (!requireNamespace("org.Hs.eg.db", quietly = TRUE)) {
+  BiocManager::install("org.Hs.eg.db")
+}
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(dplyr)
+library(tibble)
+suppressPackageStartupMessages({
+  library(survival)
+  library(survminer)
+  library(dplyr)
+  library(ggplot2)
+  library(cowplot)
+  library(forcats)
+})
+
+
+load("../controlled_data/TIL/clin_final_TIL.R")
+load("../public/clin_final.R")
+```
+
+
+
+# Create combined dataset
+```{r}
+# Hugo
+# gse_hugo <- getGEO("GSE78220", GSEMatrix = TRUE)
+fn <- "../controlled_data/aPD1/GSE78220_series_matrix.txt.gz"
+gse_hugo <- getGEO(
+  filename = fn,
+  GSEMatrix = TRUE,
+  destdir="../controlled_data/aPD1/"
+)
+
+# getGEOSuppFiles("GSE78220", makeDirectory = TRUE)
+fp <- file.path("GSE78220", "GSE78220_PatientFPKM.xlsx")
+hugo_fpkm <- read.xlsx(fp)
+gene_col <- hugo_fpkm[[1]]
+expr_hugo <- as.matrix(hugo_fpkm[ , -1])
+rownames(expr_hugo) <- gene_col
+
+
+pheno_hugo    <- pData(gse_hugo)
+#remove the non baselines
+pheno_hugo <- subset(pheno_hugo, `biopsy time:ch1` == "pre-treatment")
+
+pheno_hugo$PtID <- paste0(pheno_hugo$title,".baseline")
+
+expr_hugo <- expr_hugo[ , pheno_hugo$PtID]  # reorder columns to match pheno rows
+ 
+
+# Riaz
+fn <- "../controlled_data/aPD1/GSE91061_series_matrix.txt.gz"
+gse_riaz <- getGEO(
+  filename = fn,
+  GSEMatrix = TRUE,
+  destdir="../controlled_data/aPD1/"
+)
+
+pheno_riaz    <- pData(gse_riaz)
+
+# getGEOSuppFiles("GSE91061", makeDirectory = TRUE)
+fs <- list.files("GSE91061", full.names = TRUE)
+fs
+
+
+# pick the one that looks like "fpkm" or "counts"
+fpkm_file  <- fs[grepl("fpkm",  fs, ignore.case = TRUE)][1]  # adjust if needed
+counts_file <- fs[grepl("count", fs, ignore.case = TRUE)][1]
+
+# Read FPKM matrix (genes x samples)
+riaz_fpkm <- read.csv(fpkm_file)
+entrez_ids <- as.character(riaz_fpkm$X)
+
+# Expression values
+expr_riaz_raw <- as.matrix(riaz_fpkm[ , -1])
+rownames(expr_riaz_raw) <- entrez_ids
+
+
+# Unique Entrez IDs to map
+entrez_unique <- unique(entrez_ids)
+
+map_tab <- AnnotationDbi::select(
+  org.Hs.eg.db,
+  keys     = entrez_unique,
+  keytype  = "ENTREZID",
+  columns  = c("SYMBOL")
+)
+# map_tab has columns: ENTREZID, SYMBOL
+# Match in the correct order
+sym_vec <- map_tab$SYMBOL[ match(entrez_ids, map_tab$ENTREZID) ]
+
+# Drop rows without a valid symbol
+keep <- !is.na(sym_vec) & sym_vec != ""
+expr_riaz_sym0 <- expr_riaz_raw[keep, , drop = FALSE]
+sym_vec_keep   <- sym_vec[keep]
+
+# Set rownames to symbols (still can have duplicates)
+rownames(expr_riaz_sym0) <- sym_vec_keep
+
+collapse_by_symbol <- function(mat) {
+  df <- as.data.frame(mat)
+  df$gene <- rownames(df)
+  df %>%
+    group_by(gene) %>%
+    summarise(across(where(is.numeric), mean, na.rm = TRUE)) %>%
+    as.data.frame() %>%
+    column_to_rownames("gene")
+}
+
+expr_riaz_sym <- collapse_by_symbol(expr_riaz_sym0)
+
+#take only baselines
+pheno_riaz <- subset(pheno_riaz, `visit (pre or on treatment):ch1` =="Pre")
+#adjust colnames 
+colnames(expr_riaz_sym) <- gsub("\\.", "-",colnames(expr_riaz_sym))
+expr_riaz <- expr_riaz_sym[ , pheno_riaz$title]  # reorder columns to match pheno rows
+
+common_genes <- intersect(rownames(expr_hugo), rownames(expr_riaz))
+
+expr_hugo_rpkm <- expr_hugo[common_genes, , drop = FALSE]
+expr_riaz_rpkm <- expr_riaz[common_genes, , drop = FALSE]
+
+## 2) Optional but recommended: log2-transform to match other cohorts
+expr_hugo_logrpkm <- log2(expr_hugo_rpkm + 1)
+expr_riaz_logrpkm <- log2(expr_riaz_rpkm + 1)
+
+## 3) Combine Hugo + Riaz
+expr_combined <- cbind(expr_hugo_logrpkm, expr_riaz_logrpkm)
+
+#create metadata
+pheno_hugo_sub <- pheno_hugo %>% 
+  transmute(
+    sample_id           = rownames(.),
+    title               = title,
+    cohort              = "Hugo",
+    age                 = suppressWarnings(as.numeric(`age (yrs):ch1`)),
+    anatomical_location = as.character(`anatomical location:ch1`),
+    response            = as.character(`anti-pd-1 response:ch1`),
+    braf_status         = as.character(`braf:ch1`),
+    disease_status      = as.character(`disease status:ch1`),
+    gender              = as.character(`gender:ch1`),
+    nf1_status          = as.character(`nf1:ch1`),
+    nras_status         = as.character(`nras:ch1`),
+    os_days             = suppressWarnings(as.numeric(`overall survival (days):ch1`)),
+    previous_mapki      = as.character(`previous mapki:ch1`),
+    vital_status        = as.character(`vital status:ch1`)
+)
+
+pheno_hugo_sub <- pheno_hugo %>% 
+  transmute(
+    sample_id           = rownames(.),
+    title               = PtID,
+    cohort              = "Hugo",
+    age                 = suppressWarnings(as.numeric(`age (yrs):ch1`)),
+    anatomical_location = as.character(`anatomical location:ch1`),
+    response            = case_when(
+      `anti-pd-1 response:ch1` == "Progressive Disease" ~ "PD",
+      `anti-pd-1 response:ch1` == "Complete Response" ~ "CR",
+      `anti-pd-1 response:ch1` == "Partial Response" ~ "PR"
+      ),
+    braf_status         = as.character(`braf:ch1`),
+    disease_status      = as.character(`disease status:ch1`),
+    gender              = as.character(`gender:ch1`),
+    nf1_status          = as.character(`nf1:ch1`),
+    nras_status         = as.character(`nras:ch1`),
+    os_days             = suppressWarnings(as.numeric(`overall survival (days):ch1`)),
+    previous_mapki      = as.character(`previous mapki:ch1`),
+    vital_status        = case_when(
+      `vital status:ch1` == "Dead" ~ "1",
+      `vital status:ch1` == "Alive" ~ "0", 
+      TRUE ~ NA_character_),
+    cytolytic_score=NA_real_
+  ) %>% mutate(dataset="Hugo")
+
+
+pheno_riaz_additional <- read.xlsx("GSE91061/meta_riaz.xlsx")
+pheno_riaz_additional$Patient
+pheno_riaz$Patient <- str_split_i(pattern = "_",string = pheno_riaz$title,1)
+pheno_riaz<- pheno_riaz %>% left_join(pheno_riaz_additional, by="Patient")
+pheno_riaz_sub <- pheno_riaz %>% 
+  transmute(
+    sample_id           = rownames(.),
+    title               = title,
+    cohort              = "Riaz",
+    age                 = NA_real_,        # numeric, matches Hugo$age
+    anatomical_location = NA_character_,
+    response            = as.character(Response),
+    braf_status         = NA_character_,
+    disease_status      = NA_character_,
+    gender              = NA_character_,
+    nf1_status          = NA_character_,
+    nras_status         = NA_character_,
+    os_days             = `Time.to.Death.(weeks)`*7,        # numeric, matches Hugo$os_days
+    previous_mapki      = NA_character_,
+    vital_status        = case_when(
+      `Dead/Alive.(Dead.=.True)` == "TRUE" ~ "1",
+      `Dead/Alive.(Dead.=.True)` == "FALSE" ~ "0", 
+      TRUE ~ NA_character_),
+    cytolytic_score = as.numeric(Cytolytic.Score)
+  ) %>% mutate(dataset="Riaz")
+
+pheno_combined <- bind_rows(pheno_hugo_sub, pheno_riaz_sub) 
+
+pheno_combined <- as.data.frame(pheno_combined)
+rownames(pheno_combined) <- NULL
+
+# Now set sample_id as rownames manually
+rownames(pheno_combined) <- pheno_combined$sample_id
+pheno_combined$sample_id <- NULL
+
+```
+
+# Univariate analysis in the combined apd1 cohort
+
+```{r}
+#calculate signature
+rank_data_apd1 <- rankGenes(expr_combined)
+scores_apd1 <- simpleScore(rank_data_apd1,
+                      upSet   = up_list,
+                      downSet = down_list)
+#rownames(scores) <- gsub(x= rownames(scores), pattern = "\\.", replacement = "-")
+scores_apd1$sample <- rownames(scores_apd1)
+scores_apd1 <- subset(scores_apd1, sample %in% pheno_hugo_sub$title)
+pheno_combined <- subset(pheno_combined, title %in% scores_apd1$sample)
+scores_apd1 <- scores_apd1[order(scores_apd1$sample, pheno_combined$title),]
+
+pheno_combined$signature_score <- scores_apd1$TotalScore[
+  match(pheno_combined$title, scores_apd1$sample)
+]
+
+# Check they all matched:
+stopifnot(!any(is.na(pheno_combined$signature_score)))
+
+
+# 3) Define your group (you already have this)
+pheno_combined <- as.data.frame(pheno_combined) %>%
+  dplyr::mutate(group = if_else(signature_score >= 
+                                  quantile(signature_score, 0.75),
+                                "High","Low"))
+
+pheno_combined %>%
+  dplyr::filter(!is.na(response), !is.na(signature_score)) %>%
+  ggplot(aes(x = response, y = signature_score)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(width = 0.2, alpha = 0.6, aes(colour = dataset, label = title)) +
+  labs(
+    x = "Response",
+    y = "Signature score",
+    title = "Signature score by response (Hugo + Riaz)"
+  ) +
+  theme_bw(base_size = 12)
+
+pheno_for_resp <- pheno_combined %>%
+  mutate(
+    resp_bin = case_when(
+      response %in% c("CR", "PR") ~ "Response",   # responders
+      response %in% c("SD", "PD") ~ "No response",   # non-responders
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  dplyr::filter(!is.na(resp_bin))
+
+# summary(glm(resp_bin ~ signature_score + cohort,
+#             data = pheno_for_resp,
+#             family = binomial))
+
+ggplot(pheno_for_resp, aes(x=resp_bin, y = signature_score))+
+  geom_violin()+geom_point()+stat_compare_means()
+
+pheno_for_resp$vital_status <- as.numeric(pheno_for_resp$vital_status)
+pheno_for_resp$OS.months <- pheno_for_resp$os_days/30.99
+fit_apd1 <- survfit(
+  Surv(OS.months, vital_status) ~ group,
+  data = pheno_for_resp)
+
+
+# 5) Plot
+ggsurvplot(
+  fit_apd1,
+  data       = pheno_for_resp,
+  pval       = TRUE,
+  risk.table = TRUE
+)
+```
+
+# Joined cohort analysis
+
+```{r}
+tcga_df <- clin_final %>%
+  transmute(cohort = "TCGA", time = OS.time,            event = OS,           signature_score)
+apd1_df <- pheno_combined %>%
+  transmute(cohort = "ICI",  time = os_days,            event = vital_status, signature_score)
+til_df  <- clin_final_TIL %>%
+  transmute(cohort = "TIL",  time = OS.months * 30.44,  event = OS_censored,  signature_score)
+
+all_surv <- bind_rows(tcga_df, apd1_df, til_df) %>%
+  mutate(event = as.numeric(event)) %>%
+  filter(!is.na(time), !is.na(event), !is.na(signature_score)) %>%
+  mutate(cohort = factor(cohort, levels = c("TCGA", "ICI", "TIL")))
+
+all_surv <- all_surv %>%
+  group_by(cohort) %>%
+  mutate(signature_z = as.numeric(scale(signature_score))) %>%
+  ungroup()
+
+cox_tab <- all_surv %>%
+  group_by(cohort) %>%
+  group_modify(~{
+    s <- summary(coxph(Surv(time, event) ~ signature_z, data = .x))
+    tibble(
+      n      = s$n,
+      events = s$nevent,
+      HR     = s$conf.int[1, "exp(coef)"],
+      lower  = s$conf.int[1, "lower .95"],
+      upper  = s$conf.int[1, "upper .95"],
+      p      = s$coefficients[1, "Pr(>|z|)"]
+    )
+  }) %>%
+  ungroup() %>%
+  mutate(label = sprintf("%s  (n=%d, events=%d)", cohort, n, events),
+         label = factor(label, levels = rev(unique(label))))  # TCGA on top
+
+pA <- ggplot(cox_tab, aes(x = HR, y = label)) +
+  geom_vline(xintercept = 1, linetype = "dashed", colour = "grey50") +
+  geom_pointrange(aes(xmin = lower, xmax = upper), linewidth = 0.7, size = 0.6) +
+  geom_text(aes(label = sprintf("HR %.2f (%.2f-%.2f), p=%.2g", HR, lower, upper, p)),
+            vjust = -1.1, size = 3) +
+  scale_x_log10() +
+  labs(x = "HR per 1 SD increase in HLA-II^CONST score (log scale)",
+       y = NULL,
+       title = "Continuous-score association with overall survival") +
+  theme_bw(base_size = 11)
+pB <- ggplot(all_surv, aes(x = cohort, y = signature_z, fill = cohort)) +
+  geom_violin(trim = FALSE, alpha = 0.4) +
+  geom_boxplot(width = 0.15, outlier.shape = NA) +
+  geom_jitter(width = 0.08, alpha = 0.5, size = 0.8) +
+  guides(fill = "none") +
+  labs(x = NULL, y = "Signature score (z within cohort)",
+       title = "Score distribution by cohort") +
+  theme_bw(base_size = 11)
+fit_overall <- survfit(Surv(time, event) ~ cohort, data = all_surv)
+gg_risk <- ggsurvplot(
+  fit_overall, data = all_surv,
+  risk.table = TRUE, risk.table.height = 0.5,
+  conf.int = FALSE, censor = FALSE,
+  legend.title = "Cohort",
+  xlab = "Time (days)", ylab = "Overall survival",
+  ggtheme = theme_bw(base_size = 11)
+)
+pC <- plot_grid(gg_risk$plot, gg_risk$table, ncol = 1, rel_heights = c(2, 1.1))
+
+```
+
+```{r}
+top <- plot_grid(pA, pB, nrow = 1, rel_widths = c(1.4, 1), labels = c("A", "B"))
+supp_fig12 <- plot_grid(top, pC, ncol = 1, rel_heights = c(1, 1.2),
+                        labels = c("", "C"))
+
+```
+
+
+
+

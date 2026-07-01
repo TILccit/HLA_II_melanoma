@@ -1,0 +1,412 @@
+library(openxlsx)
+library(data.table)
+library(tidyr)
+library(ggplot2)
+library(ggpubr)
+library(ggbreak)
+library(tidyverse)
+
+###CD4 NO IFN#####
+setwd("E:/PhD_projects/MHCII_project/CD4flowMP/clear things/Mario/Tables_Mario/double_positives/")
+ics_data_cd4_noifn <- read.xlsx("ICS_IFN.xlsx",sheet = "CD4_NO_IFN")
+ics_data_cd4_noifn$`TCL33` <- NULL
+colnames(ics_data_cd4_noifn)[1] <- "condition"
+rownames(ics_data_cd4_noifn) <- gsub(".fcs", "", ics_data_cd4_noifn$condition)
+ics_data_cd4_noifn[,"condition"]=NULL
+
+#background removal
+alone <- as.numeric(ics_data_cd4_noifn["TILAlone",])
+ics_data_cd4_noifn_noback <- sweep(ics_data_cd4_noifn, 2, alone, FUN = "-")
+ics_data_cd4_noifn_noback[ics_data_cd4_noifn_noback <= 0] <- 0.001
+ics_data_cd4_noifn_noback <- ics_data_cd4_noifn_noback[2:nrow(ics_data_cd4_noifn_noback),]
+
+#remove samples with no reactivity at baseline
+ics_data_cd4_noifn_noback <- ics_data_cd4_noifn_noback[,which(ics_data_cd4_noifn_noback[1,]> 0.01)]
+
+#plotting and testing
+ics_data_cd4_noifn_noback_plot <- as.data.frame(t(ics_data_cd4_noifn_noback))
+ics_data_cd4_noifn_noback_plot$sample <- rownames(ics_data_cd4_noifn_noback_plot)
+ics_data_cd4_noifn_noback_plot <- pivot_longer(ics_data_cd4_noifn_noback_plot,cols = !(sample), names_to = "Condition")
+ics_data_cd4_noifn_noback_plot$Condition <- factor(ics_data_cd4_noifn_noback_plot$Condition, levels = 
+                                                     c(unique(grep("WT", ics_data_cd4_noifn_noback_plot$Condition, value = T)),
+                                                       unique(grep("CIITA", ics_data_cd4_noifn_noback_plot$Condition, value = T)),
+                                                       unique(grep("DR", ics_data_cd4_noifn_noback_plot$Condition, value = T)),
+                                                       unique(grep("DP", ics_data_cd4_noifn_noback_plot$Condition, value = T)),
+                                                       unique(grep("DQ", ics_data_cd4_noifn_noback_plot$Condition, value = T))
+                                                       ))
+
+ref <- unique(grep("WT", ics_data_cd4_noifn_noback_plot$Condition, value = T))
+other_conds <- setdiff(unique(levels(ics_data_cd4_noifn_noback_plot$Condition)), c(ref))
+comparisons_noifn <- lapply(other_conds, function(x) c(ref, x))
+
+y_positions_noifn <- seq(from = 0.60 * 50, to = 0.9 * 50, length.out = length(comparisons_noifn))
+
+levels(ics_data_cd4_noifn_noback_plot$Condition) <- sub("TIL\\+Tumor ", "", levels(ics_data_cd4_noifn_noback_plot$Condition))
+levels(ics_data_cd4_noifn_noback_plot$Condition) <- sub("KO ", "", levels(ics_data_cd4_noifn_noback_plot$Condition))
+
+comparisons_noifn <- lapply(comparisons_noifn, function(x) sub("TIL\\+Tumor ", "", x))
+comparisons_noifn <- lapply(comparisons_noifn, function(x) sub("KO ", "", x))
+
+ggplot(ics_data_cd4_noifn_noback_plot, aes(x = Condition, y = value)) +
+  stat_summary(aes(fill=Condition),fun = median, geom = "col", show.legend = FALSE,alpha=0.6) +
+  geom_line(aes(group = sample, colour = sample), size = 1, alpha = 0.6) +
+  geom_point(size = 2, stroke = 0.5, alpha = 0.8, color="grey10") +
+  scale_fill_viridis_d(option = "B", begin = 0.1, end = 0.5) +
+  scale_color_viridis_d(option = "B", begin = 0.5, end = 0.9) +
+  theme_classic(base_size = 14) +
+  theme(
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.text.x        = element_text(angle = 45, hjust = 1),
+    axis.title.x       = element_blank(),
+    legend.position    = "right",
+    legend.title       = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5)
+  )+
+  stat_compare_means(
+    comparisons   = comparisons_noifn,
+    method        = "wilcox.test",
+    paired        = TRUE,
+    p.adjust.method = "fdr",
+    label         = "p.adj",
+    label.y = y_positions_noifn,
+    size          = 5
+  )+
+  stat_summary(
+    aes(label = paste0(sprintf("%.2f", ..y..),"%")),
+    fun      = median,
+    geom     = "label",           # use labels instead of plain text
+    vjust    = -0.5,              # nudge a bit above
+    size     = 4,
+    fill     = "white",           # white box behind text
+    colour   = "black",
+    label.padding = unit(0.2, "lines"),  # more breathing room
+    label.r       = unit(0.15, "lines")  # slightly rounded corners
+  ) +
+  scale_y_continuous(limits = c(0,50))+
+  labs(
+    title = "CD4+ TIL reactivity (No IFN)",
+    x     = NULL,
+    y     = "% of reactive CD4+ TILs"
+  )
+
+
+
+####Fold changes plot
+#calculate fold changes
+ics_data_cd4_noifn_noback_fold <- sweep(ics_data_cd4_noifn_noback,2, as.numeric(ics_data_cd4_noifn_noback["TIL+Tumor WT",]), FUN = "/")
+
+ics_data_cd4_noifn_noback_fold_plot <- as.data.frame(t(ics_data_cd4_noifn_noback_fold))
+ics_data_cd4_noifn_noback_fold_plot$sample <- rownames(ics_data_cd4_noifn_noback_fold_plot)
+ics_data_cd4_noifn_noback_fold_plot <- pivot_longer(ics_data_cd4_noifn_noback_fold_plot,cols = !(sample), names_to = "Condition")
+
+
+ics_data_cd4_noifn_noback_fold_plot$Condition <- factor(ics_data_cd4_noifn_noback_fold_plot$Condition, levels = 
+                                               c(unique(grep("WT", ics_data_cd4_noifn_noback_fold_plot$Condition, value = T)),
+                                                 unique(grep("DR", ics_data_cd4_noifn_noback_fold_plot$Condition, value = T)),
+                                                 unique(grep("DP", ics_data_cd4_noifn_noback_fold_plot$Condition, value = T)),
+                                                 unique(grep("DQ", ics_data_cd4_noifn_noback_fold_plot$Condition, value = T)),
+                                                 unique(grep("CIITA", ics_data_cd4_noifn_noback_fold_plot$Condition, value = T))))
+
+ref <- unique(grep("CIITA", ics_data_cd4_noifn_noback_fold_plot$Condition, value = T))
+alone_control <- unique(grep("WT", ics_data_cd4_noifn_noback_fold_plot$Condition, value = T))
+other_conds <- setdiff(levels(ics_data_cd4_noifn_noback_fold_plot$Condition), c(ref,alone_control))
+comparisons_noinf_fc <- lapply(other_conds, function(x) c(ref, x))
+
+max_extent_noifn = max(ics_data_cd4_noifn_noback_fold_plot$value)
+y_positions_noifn_fc <- seq(from = 1 * round(max_extent_noifn), to = 1.4 * round(max_extent_noifn), length.out = length(comparisons_noinf_fc))
+ics_data_cd4_noifn_noback_fold_plot$Condition <- factor(ics_data_cd4_noifn_noback_fold_plot$Condition, levels = c("TIL+Tumor CIITA KO",
+                                                                                                      "TIL+Tumor HLA-DR KO",
+                                                                                                      "TIL+Tumor HLA-DP KO",
+                                                                                                      "TIL+Tumor HLA-DQ KO"))
+
+
+levels(ics_data_cd4_noifn_noback_fold_plot$Condition) <- sub("TIL\\+Tumor ", "", levels(ics_data_cd4_noifn_noback_fold_plot$Condition))
+levels(ics_data_cd4_noifn_noback_fold_plot$Condition) <- sub("KO ", "", levels(ics_data_cd4_noifn_noback_fold_plot$Condition))
+
+comparisons_noinf_fc <- lapply(comparisons_noinf_fc, function(x) sub("TIL\\+Tumor ", "", x))
+comparisons_noinf_fc <- lapply(comparisons_noinf_fc, function(x) sub("KO ", "", x))
+
+ggplot(subset(ics_data_cd4_noifn_noback_fold_plot, Condition != alone_control), aes(x = Condition, y = value)) +
+  # geom_col(aes(fill = Condition),color=NA,alpha = 0.3, show.legend = FALSE) +
+  stat_summary(aes(fill=Condition),fun = median, geom = "col", show.legend = FALSE,alpha=0.8)+
+  geom_line(aes(group = sample), size = 1, alpha = 0.6) +
+  geom_point(size = 2, stroke = 0.5, alpha = 0.8, color="grey10") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey30") +
+  scale_fill_viridis_d(option = "D", begin = 0.3, end = 0.9) +
+  scale_color_viridis_d(option = "D", begin = 0.3, end = 0.9) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.text.x        = element_text(angle = 45, hjust = 1),
+    axis.title.x       = element_blank(),
+    legend.position    = "right",
+    legend.title       = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5)
+  ) +
+  # scale_y_continuous(limits = c(-round(max_extent), round(max_extent))*1.2,
+  #                    breaks=seq(-round(max_extent), round(max_extent),by=5), 
+  #                    expand = expansion(mult = c(0, 0.1)))+
+  stat_compare_means(
+    comparisons   = comparisons_noinf_fc,
+    method        = "wilcox.test",
+    paired        = TRUE,
+    label         = "p.adj",
+    label.y    = y_positions_noifn_fc,
+    size          = 5
+  )+
+  stat_summary(
+    aes(label = sprintf("%.2f", ..y..)),
+    fun     = median,
+    geom    = "label",
+    vjust   = -1.2,       # move above the highest point of each bar
+    size    = 3.5,
+    fill     = "white",
+    color   = "black",
+    fontface= "bold",
+    label.padding = unit(0.2, "lines"),  # more breathing room
+    label.r       = unit(0.15, "lines")  # slightly rounded corners
+  ) +
+  labs(
+    title = "Fold changes in CD4 TIL reactivity",
+    x     = NULL,
+    y     = "Fold change to WT"
+  )
+
+ggplot(subset(ics_data_cd4_noifn_noback_fold_plot, Condition != alone_control),
+       aes(x = Condition, y = value)) +
+  geom_boxplot(aes(fill = Condition), width = 0.6, alpha = 0.6,
+               outlier.shape = 16, outlier.size = 1.6, outlier.alpha = 0.6,
+               show.legend = FALSE) +
+  geom_line(aes(group = sample), size = 1, alpha = 0.6) +
+  geom_point(size = 2, stroke = 0.5, alpha = 0.8, color = "grey10") +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey30") +
+  scale_fill_viridis_d(option = "D", begin = 0.3, end = 0.9) +
+  theme_minimal(base_size = 14) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.x = element_blank(),
+        legend.position = "right",
+        legend.title = element_text(face = "bold"),
+        plot.title = element_text(hjust = 0.5)) +
+  labs(title = "Fold changes in CD4 TIL reactivity",
+       y = "Fold change to WT")+
+  scale_fill_viridis_d(option = "D", begin = 0.3, end = 0.9) +
+  scale_color_viridis_d(option = "D", begin = 0.3, end = 0.9) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.text.x        = element_text(angle = 45, hjust = 1),
+    axis.title.x       = element_blank(),
+    legend.position    = "right",
+    legend.title       = element_text(face = "bold"),
+    plot.title         = element_text(hjust = 0.5)
+  ) +
+  # keep your stats as-is (ensure label.y is above the tallest bar for each comparison)
+  stat_compare_means(
+    comparisons = comparisons_noinf_fc,
+    method      = "wilcox.test",
+    paired      = TRUE,
+    label       = "p.signif",
+    label.y     = y_positions_noifn_fc,
+    size        = 5
+  ) +
+  # Median labels (uses the computed stat’s y)
+  stat_summary(
+    aes(label = sprintf("%.2f", ..y..)),
+    fun      = median,
+    geom     = "text",
+    vjust    = -1.2,
+    size     = 3.5,
+    color    = "black",
+    fontface = "bold"
+  ) +
+  labs(
+    title = "CD4 TIL reactivity fold change (No IFN)",
+    x     = NULL,
+    y     = "Fold change to WT"
+  )
+###CD4 IFN#####
+setwd("E:/PhD_projects/MHCII_project/CD4flowMP/clear things/Mario/Tables_Mario/double_positives/")
+ics_data_cd4 <- read.xlsx("ICS_IFN.xlsx",sheet = "CD4_IFN")
+ics_data_cd4$`TCL33` <- NULL
+colnames(ics_data_cd4)[1] <- "condition"
+rownames(ics_data_cd4) <- gsub(".fcs", "", ics_data_cd4$condition)
+ics_data_cd4[,"condition"]=NULL
+
+#background removal
+alone <- as.numeric(ics_data_cd4["TILAlone",])
+ics_data_cd4_noback <- sweep(ics_data_cd4, 2, alone, FUN = "-")
+ics_data_cd4_noback[ics_data_cd4_noback <= 0] <- 0.001
+ics_data_cd4_noback <- ics_data_cd4_noback[2:nrow(ics_data_cd4_noback),]
+
+#remove samples with no reactivity at baseline
+ics_data_cd4_noback <- ics_data_cd4_noback[,which(ics_data_cd4_noback[1,]> 0.2)]
+
+#plotting and testing
+ics_data_cd4_noback_plot <- as.data.frame(t(ics_data_cd4_noback))
+ics_data_cd4_noback_plot$sample <- rownames(ics_data_cd4_noback_plot)
+ics_data_cd4_noback_plot <- pivot_longer(ics_data_cd4_noback_plot,cols = !(sample), names_to = "Condition")
+ics_data_cd4_noback_plot$Condition <- factor(ics_data_cd4_noback_plot$Condition, levels = 
+                                                     c(unique(grep("WT", ics_data_cd4_noback_plot$Condition, value = T)),
+                                                       unique(grep("CIITA", ics_data_cd4_noback_plot$Condition, value = T)),
+                                                       unique(grep("DR", ics_data_cd4_noback_plot$Condition, value = T)),
+                                                       unique(grep("DP", ics_data_cd4_noback_plot$Condition, value = T)),
+                                                       unique(grep("DQ", ics_data_cd4_noback_plot$Condition, value = T))
+                                                     ))
+
+ref <- unique(grep("WT", ics_data_cd4_noback_plot$Condition, value = T))
+other_conds <- setdiff(unique(levels(ics_data_cd4_noback_plot$Condition)), c(ref))
+comparisons_ifn <- lapply(other_conds, function(x) c(ref, x))
+
+y_positions_ifn <- seq(from = 0.60 * 50, to = 0.9 * 50, length.out = length(comparisons_ifn))
+
+levels(ics_data_cd4_noback_plot$Condition) <- sub("TIL\\+Tumor ", "", levels(ics_data_cd4_noback_plot$Condition))
+levels(ics_data_cd4_noback_plot$Condition) <- sub("KO ", "", levels(ics_data_cd4_noback_plot$Condition))
+
+comparisons_ifn <- lapply(comparisons_ifn, function(x) sub("TIL\\+Tumor ", "", x))
+comparisons_ifn <- lapply(comparisons_ifn, function(x) sub("KO ", "", x))
+
+ggplot(ics_data_cd4_noback_plot, aes(x = Condition, y = value)) +
+  stat_summary(aes(fill=Condition),fun = median, geom = "col", show.legend = FALSE,alpha=0.6) +
+  geom_line(aes(group = sample, colour = sample), size = 1, alpha = 0.6) +
+  geom_point(size = 2, stroke = 0.5, alpha = 0.8, color="grey10") +
+  scale_fill_viridis_d(option = "B", begin = 0.1, end = 0.5) +
+  scale_color_viridis_d(option = "B", begin = 0.5, end = 0.9) +
+  theme_classic(base_size = 14) +
+  theme(
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.text.x        = element_text(angle = 45, hjust = 1),
+    axis.title.x       = element_blank(),
+    legend.position    = "right",
+    legend.title       = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5)
+  )+
+  stat_compare_means(
+    comparisons   = comparisons_ifn,
+    method        = "wilcox.test",
+    paired        = TRUE,
+    p.adjust.method = "fdr",
+    label         = "p.signif",
+    label.y = y_positions_ifn,
+    size          = 5
+  )+
+  stat_summary(
+    aes(label = paste0(sprintf("%.2f", ..y..),"%")),
+    fun      = median,
+    geom     = "label",           # use labels instead of plain text
+    vjust    = -0.5,              # nudge a bit above
+    size     = 4,
+    fill     = "white",           # white box behind text
+    colour   = "black",
+    label.padding = unit(0.2, "lines"),  # more breathing room
+    label.r       = unit(0.15, "lines")  # slightly rounded corners
+  ) +
+  scale_y_continuous(limits = c(0,50))+
+  labs(
+    title = "CD4+ TIL reactivity (No IFN)",
+    x     = NULL,
+    y     = "% of reactive CD4+ TILs"
+  )
+
+
+
+####Fold changes plot
+#calculate fold changes
+ics_data_cd4_noback_fold <- sweep(ics_data_cd4_noback,2, as.numeric(ics_data_cd4_noback["TIL+Tumor WT",]), FUN = "/")
+
+ics_data_cd4_noback_fold_plot <- as.data.frame(t(ics_data_cd4_noback_fold))
+ics_data_cd4_noback_fold_plot$sample <- rownames(ics_data_cd4_noback_fold_plot)
+ics_data_cd4_noback_fold_plot <- pivot_longer(ics_data_cd4_noback_fold_plot,cols = !(sample), names_to = "Condition")
+
+
+ics_data_cd4_noback_fold_plot$Condition <- factor(ics_data_cd4_noback_fold_plot$Condition, levels = 
+                                                          c(unique(grep("WT", ics_data_cd4_noback_fold_plot$Condition, value = T)),
+                                                            unique(grep("DR", ics_data_cd4_noback_fold_plot$Condition, value = T)),
+                                                            unique(grep("DP", ics_data_cd4_noback_fold_plot$Condition, value = T)),
+                                                            unique(grep("DQ", ics_data_cd4_noback_fold_plot$Condition, value = T)),
+                                                            unique(grep("CIITA", ics_data_cd4_noback_fold_plot$Condition, value = T))))
+
+ref <- unique(grep("CIITA", ics_data_cd4_noback_fold_plot$Condition, value = T))
+alone_control <- unique(grep("WT", ics_data_cd4_noback_fold_plot$Condition, value = T))
+other_conds <- setdiff(levels(ics_data_cd4_noback_fold_plot$Condition), c(ref,alone_control))
+comparisons_ifn_fc <- lapply(other_conds, function(x) c(ref, x))
+
+max_extent_ifn <- max(ics_data_cd4_noback_fold_plot$value,na.rm = T)
+y_positions_ifn_fc <- seq(from = 0.9 * round(max_extent_ifn), to = 1.3 * round(max_extent_ifn), length.out = length(comparisons_ifn_fc))
+ics_data_cd4_noback_fold_plot$Condition <- factor(ics_data_cd4_noback_fold_plot$Condition, levels = c("TIL+Tumor CIITA KO IFN",
+                                                                                                                  "TIL+Tumor HLA-DR KO IFN",
+                                                                                                                  "TIL+Tumor HLA-DP KO IFN",
+                                                                                                                  "TIL+Tumor HLA-DQ KO IFN"))
+
+
+levels(ics_data_cd4_noback_fold_plot$Condition) <- sub("TIL\\+Tumor ", "", levels(ics_data_cd4_noback_fold_plot$Condition))
+levels(ics_data_cd4_noback_fold_plot$Condition) <- sub("KO ", "", levels(ics_data_cd4_noback_fold_plot$Condition))
+
+comparisons_ifn_fc <- lapply(comparisons_ifn_fc, function(x) sub("TIL\\+Tumor ", "", x))
+comparisons_ifn_fc <- lapply(comparisons_ifn_fc, function(x) sub("KO ", "", x))
+
+
+
+ggplot(subset(ics_data_cd4_noback_fold_plot, Condition != alone_control),
+       aes(x = Condition, y = value)) +
+  geom_boxplot(aes(fill = Condition), width = 0.6, alpha = 0.6,
+               outlier.shape = 16, outlier.size = 1.6, outlier.alpha = 0.6,
+               show.legend = FALSE) +
+  geom_line(aes(group = sample), size = 1, alpha = 0.6) +
+  geom_point(size = 2, stroke = 0.5, alpha = 0.8, color = "grey10") +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey30") +
+  scale_fill_viridis_d(option = "D", begin = 0.3, end = 0.9) +
+  theme_minimal(base_size = 14) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.x = element_blank(),
+        legend.position = "right",
+        legend.title = element_text(face = "bold"),
+        plot.title = element_text(hjust = 0.5)) +
+  labs(title = "Fold changes in CD4 TIL reactivity",
+       y = "Fold change to WT")+
+  scale_fill_viridis_d(option = "D", begin = 0.3, end = 0.9) +
+  scale_color_viridis_d(option = "D", begin = 0.3, end = 0.9) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.text.x        = element_text(angle = 45, hjust = 1),
+    axis.title.x       = element_blank(),
+    legend.position    = "right",
+    legend.title       = element_text(face = "bold"),
+    plot.title         = element_text(hjust = 0.5)
+  ) +
+  # keep your stats as-is (ensure label.y is above the tallest bar for each comparison)
+  stat_compare_means(
+    comparisons = comparisons_ifn_fc,
+    method      = "wilcox.test",
+    paired      = TRUE,
+    label       = "p.signif",
+    label.y     = y_positions_ifn_fc,
+    size        = 5
+  ) +
+  # Median labels (uses the computed stat’s y)
+  stat_summary(
+    aes(label = sprintf("%.2f", ..y..)),
+    fun      = median,
+    geom     = "text",
+    vjust    = -1.2,
+    size     = 3.5,
+    color    = "black",
+    fontface = "bold"
+  ) +
+  labs(
+    title = "CD4 TIL reactivity fold change",
+    x     = NULL,
+    y     = "Fold change to WT"
+  )
+
+#fold changes for manuscript
+apply(log(ics_data_cd4_noback_fold), 1, median)
