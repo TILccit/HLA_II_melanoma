@@ -36,7 +36,7 @@ ggplot(as.data.frame(tbl), aes(x=Master.Gene.name, y=Freq))+geom_col(position = 
   geom_label_repel(data=subset(tbl, Freq > 100), aes(label = Master.Gene.name) )
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/Data%20parsing%20and%20cleaning-1.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/Data%20parsing%20and%20cleaning-1.png)<!-- -->
 
 ``` r
 ggplot(tbl, aes(x = Master.Gene.name, y = Freq)) +
@@ -56,7 +56,7 @@ ggplot(tbl, aes(x = Master.Gene.name, y = Freq)) +
   )
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/Data%20parsing%20and%20cleaning-2.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/Data%20parsing%20and%20cleaning-2.png)<!-- -->
 
 ``` r
 wt_col <- grep("WT_",colnames(res))
@@ -251,7 +251,7 @@ ggplot(gene_tt, aes(x = logFC, y = -log10(adj.P.Val))) +
     ## Warning: ggrepel: 92 unlabeled data points (too many overlaps). Consider
     ## increasing max.overlaps
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/ifn%20-%20no%20ifn%20differences-1.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/ifn%20-%20no%20ifn%20differences-1.png)<!-- -->
 
 # Exclusivity scores
 
@@ -314,7 +314,7 @@ ggplot(as.data.frame(score_mat),aes(x=DR_score,y=DP_score))+
 
     ## `geom_smooth()` using formula = 'y ~ x'
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20untreated-1.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20untreated-1.png)<!-- -->
 
 ``` r
 ggplot(as.data.frame(score_mat),aes(x=DR_score,y=DQ_score))+
@@ -323,7 +323,7 @@ ggplot(as.data.frame(score_mat),aes(x=DR_score,y=DQ_score))+
 
     ## `geom_smooth()` using formula = 'y ~ x'
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20untreated-2.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20untreated-2.png)<!-- -->
 
 ``` r
 ggplot(as.data.frame(score_mat),aes(x=DP_score,y=DQ_score))+
@@ -332,7 +332,7 @@ ggplot(as.data.frame(score_mat),aes(x=DP_score,y=DQ_score))+
 
     ## `geom_smooth()` using formula = 'y ~ x'
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20untreated-3.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20untreated-3.png)<!-- -->
 
 ``` r
 # score_mat <- ramify::clip(score_mat,.min = -2)
@@ -349,7 +349,7 @@ pheatmap(
 )
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20untreated-4.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20untreated-4.png)<!-- -->
 
 ``` r
 #use k-means clustering to divide the peptides into classes
@@ -498,7 +498,7 @@ plotlist <- list(DR_umap_noifn, DP_umap_noifn, DQ_umap_noifn)
 ggarrange(plotlist = plotlist, common.legend = T, legend = "bottom")
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20untreated-5.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20untreated-5.png)<!-- -->
 
 ## Calculation and plotting for IFNg treated conditions
 
@@ -548,7 +548,7 @@ ggplot(as.data.frame(score_mat_ifn),aes(x=DR_score,y=DP_score))+
 
     ## `geom_smooth()` using formula = 'y ~ x'
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20treated-1.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20treated-1.png)<!-- -->
 
 ``` r
 ggplot(as.data.frame(score_mat_ifn),aes(x=DR_score,y=DQ_score))+
@@ -557,7 +557,7 @@ ggplot(as.data.frame(score_mat_ifn),aes(x=DR_score,y=DQ_score))+
 
     ## `geom_smooth()` using formula = 'y ~ x'
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20treated-2.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20treated-2.png)<!-- -->
 
 ``` r
 ggplot(as.data.frame(score_mat_ifn),aes(x=DP_score,y=DQ_score))+
@@ -566,7 +566,7 @@ ggplot(as.data.frame(score_mat_ifn),aes(x=DP_score,y=DQ_score))+
 
     ## `geom_smooth()` using formula = 'y ~ x'
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20treated-3.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20treated-3.png)<!-- -->
 
 ``` r
 #use k-means clustering to divide the peptides into classes
@@ -668,7 +668,7 @@ ggplot(df_umap, aes(x = UMAP1, y = UMAP2, color = factor(KM_Cluster))) +
   scale_color_viridis_d(option = "C")
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20treated-4.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20treated-4.png)<!-- -->
 
 ``` r
 DR_umap <- ggplot(df_umap, aes(x = UMAP1, y = UMAP2, color = DR_score)) +
@@ -708,7 +708,7 @@ plotlist_ifn <- list(DR_umap, DP_umap, DQ_umap)
 ggarrange(plotlist = plotlist_ifn, common.legend = T, legend = "bottom")
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20treated-5.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/exclusivity%20treated-5.png)<!-- -->
 
 ``` r
 #write results
@@ -737,7 +737,7 @@ ggplot(netMHCIIres_tbl, aes(x=Gene))+
   geom_col(aes(y=Proportion, fill=Binder), position = "dodge2")+theme_classic()
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/Parse%20NetMHCIIPan%20output-1.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/Parse%20NetMHCIIPan%20output-1.png)<!-- -->
 
 ## HLA-II isotype redundancy analysis
 
@@ -884,7 +884,7 @@ ggplot(merged,aes(x = DR_score.y, y = minRank_HLA_DR))+geom_point()+geom_smooth(
     ## Warning: Removed 11102 rows containing missing values or values outside the scale range
     ## (`geom_point()`).
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/NetMHCIIpan%20UMAPs-1.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/NetMHCIIpan%20UMAPs-1.png)<!-- -->
 
 ``` r
 merged$bind_HLA_DP <- as.factor(merged$bind_HLA_DP)
@@ -903,7 +903,7 @@ ggplot(df_umap, aes(x = UMAP1, y = UMAP2, color = factor(KM_Cluster))) +
   scale_color_viridis_d(option = "C")
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/NetMHCIIpan%20UMAPs-2.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/NetMHCIIpan%20UMAPs-2.png)<!-- -->
 
 ``` r
 ggplot(merged, aes(x = UMAP1, y = UMAP2)) +
@@ -917,7 +917,7 @@ ggplot(merged, aes(x = UMAP1, y = UMAP2)) +
   )
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/NetMHCIIpan%20UMAPs-3.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/NetMHCIIpan%20UMAPs-3.png)<!-- -->
 
 ``` r
 ggplot(merged, aes(x = UMAP1, y = UMAP2)) +
@@ -931,7 +931,7 @@ ggplot(merged, aes(x = UMAP1, y = UMAP2)) +
   )
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/NetMHCIIpan%20UMAPs-4.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/NetMHCIIpan%20UMAPs-4.png)<!-- -->
 
 ``` r
 ggplot(merged, aes(x = UMAP1, y = UMAP2)) +
@@ -945,7 +945,7 @@ ggplot(merged, aes(x = UMAP1, y = UMAP2)) +
   )
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/NetMHCIIpan%20UMAPs-5.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/NetMHCIIpan%20UMAPs-5.png)<!-- -->
 
 ## Score distribution in each cluster
 
@@ -1049,7 +1049,7 @@ ggplot(res_long, aes(x = Score_type, y = Value, fill = Score_type)) +
   ylab("Score value")
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/Score-cluster%20histograms-1.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/Score-cluster%20histograms-1.png)<!-- -->
 
 ``` r
 binder_summary <- res_long %>%
@@ -1074,7 +1074,7 @@ ggplot(binder_summary, aes(x = final_clusters, y = prop, fill = Binder_label)) +
   xlab("Cluster (DR, DP, DQ)") 
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/Score-cluster%20histograms-2.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/Score-cluster%20histograms-2.png)<!-- -->
 
 # CAPtan analysis
 
@@ -1126,7 +1126,7 @@ ggplot(cap_all, aes(x=gene, y=Score, fill=gene)) +
   ylab("CAPTAn antigenicity score") + xlab("")+scale_y_continuous(expand = 0.1)
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/unnamed-chunk-1-1.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/unnamed-chunk-1-1.png)<!-- -->
 
 ``` r
 dr_top <- subset(dr_cap, Score > quantile(dr_cap$Score)[4])
@@ -1154,7 +1154,7 @@ ggseqlogo(core_dr_filt_first$Primary_core, seq_type="aa") +
     ## Call `lifecycle::last_lifecycle_warnings()` to see where this warning was
     ## generated.
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/motif%20analysis-1.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/motif%20analysis-1.png)<!-- -->
 
 ``` r
 core_dr_filt_second <- subset(core_dr[which(core_dr$Protein %in% dr_top$Protein),], Secondary_core != "" & Score > quantile(core_dr$Score,0.9))
@@ -1163,7 +1163,7 @@ ggseqlogo(core_dr_filt_second$Secondary_core, seq_type="aa") +
   labs(title="Logo of central 9-mers from top DR peptides (second core)")
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/motif%20analysis-2.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/motif%20analysis-2.png)<!-- -->
 
 ``` r
 core_dp <- read.csv(file = "../controlled_data/Immunopeptidomics/captan/out_DP/summary_CAPTAn_core.csv")
@@ -1173,7 +1173,7 @@ ggseqlogo(core_dp_filt_first$Primary_core, seq_type="aa") +
   labs(title="Logo of central 9-mers from top DP peptides")
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/motif%20analysis-3.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/motif%20analysis-3.png)<!-- -->
 
 ``` r
 core_dp_filt_second <- subset(core_dp[which(core_dp$Protein %in% dp_top$Protein),], Secondary_core != "" & Score > quantile(core_dp$Score,0.9))
@@ -1182,7 +1182,7 @@ ggseqlogo(core_dp_filt_second$Secondary_core, seq_type="aa") +
   labs(title="Logo of central 9-mers from top DP peptides (second core)")
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/motif%20analysis-4.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/motif%20analysis-4.png)<!-- -->
 
 ``` r
 core_dq <- read.csv(file = "../controlled_data/Immunopeptidomics/captan/out_DQ/summary_CAPTAn_core.csv")
@@ -1192,7 +1192,7 @@ ggseqlogo(core_dq_filt_first$Primary_core, seq_type="aa") +
   labs(title="Logo of central 9-mers from top DQ peptides")
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/motif%20analysis-5.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/motif%20analysis-5.png)<!-- -->
 
 ``` r
 core_dq_filt_second <- subset(core_dq, Secondary_core != "" & Score > quantile(core_dq$Score,0.9))
@@ -1201,4 +1201,4 @@ ggseqlogo(core_dq_filt_second$Secondary_core, seq_type="aa") +
   labs(title="Logo of central 9-mers from top DQ peptides (second core)")
 ```
 
-![](E:/PhD_projects/MHCII_project/Paper/Clean_scripts/GitHub/Reports/Immunopeptidomic_analysis_files/figure-gfm/motif%20analysis-6.png)<!-- -->
+![](Immunopeptidomic_analysis_files/figure-gfm/motif%20analysis-6.png)<!-- -->

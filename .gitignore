@@ -1,2 +1,7 @@
 controlled_data/
 public/depmap_data/
+.Rproj.user
+Scripts/df.rds
+Scripts/results.rds
+Scripts/MANIFEST
+Scripts/eset.txt

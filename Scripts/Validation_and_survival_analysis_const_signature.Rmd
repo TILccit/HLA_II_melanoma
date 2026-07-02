@@ -128,7 +128,7 @@ kim_genes <- unique(na.omit(dediff_kim$DediffGenes))
 dediff_genes <- unique(na.omit(subset(combined_results_filter_less_strict,log2FoldChange>0)[["gene"]]))
 signature <- unique(na.omit(subset(gene_signature_manually_curated,log2FoldChange>0)[["gene"]]))
 reactome_HLA_II <- msigdbr(db_species = "HS", collection = "C2", subcollection = "CP:REACTOME") %>%
-  filter(gs_name == "REACTOME_MHC_CLASS_II_ANTIGEN_PRESENTATION") %>% dplyr::pull(gene_symbol) %>% unique()
+  dplyr::filter(gs_name == "REACTOME_MHC_CLASS_II_ANTIGEN_PRESENTATION") %>% dplyr::pull(gene_symbol) %>% unique()
 
 gene_sets <- list(
   Kim_dediff = kim_genes,
@@ -430,7 +430,7 @@ length_kb <- dge$genes$Length / 1000
 rpk <- sweep(dge$counts, 1, length_kb, "/")
 tpm_mat <- sweep(rpk, 2, colSums(rpk), "/") * 1e6
 
-rank_data <- rankGenes(rpkm_mat)
+rank_data_til <- rankGenes(rpkm_mat)
 ```
 
 ## Compare biopsy signature score with TCL HLA-II expression
@@ -439,7 +439,7 @@ rank_data <- rankGenes(rpkm_mat)
 tcl_data <- read.xlsx("../controlled_data/TIL/MHC_expression_TCLs.xlsx",
                       sheet = "Final Data")
 
-scores_fortcl <- simpleScore(rank_data, upSet = up_list, downSet = down_list, centerScore = TRUE)
+scores_fortcl <- simpleScore(rank_data_til, upSet = up_list, downSet = down_list, centerScore = TRUE)
 scores_fortcl$sample <- rownames(scores_fortcl)
 
 validation_signature <- tcl_data %>%
@@ -525,7 +525,7 @@ ggplot(validation_signature, aes(sig, fc_ifn_log)) +
   theme_classic()
 
 ## this is the result using class II genes only
-scores_fortcl_HLA <- simpleScore(rank_data, upSet = HLAII_genes, centerScore = TRUE)
+scores_fortcl_HLA <- simpleScore(rank_data_til, upSet = HLAII_genes, centerScore = TRUE)
 scores_fortcl_HLA$sample <- rownames(scores_fortcl)
 
 validation_signature_HLA <- tcl_data %>%
@@ -1391,6 +1391,31 @@ ggsurvplot(
   title="Survival in Immune infiltration groups"
 )
 
+clin_final2 <- clin_final %>%
+  mutate(
+    Age_group = if_else(age_at_diagnosis/365 < 40, "<40", "≥40"),
+    Stage_group = case_when(
+      ajcc_pathologic_tumor_stage %in% c("Stage 0", "I/II NOS",
+                                   "Stage I","Stage IA","Stage IB",
+                                   "Stage II","Stage IIA","Stage IIB","Stage IIC")
+      ~ "0/I/II",
+      ajcc_pathologic_tumor_stage %in% c("Stage III","Stage IIIA","Stage IIIB","Stage IIIC")
+      ~ "III",
+      ajcc_pathologic_tumor_stage == "Stage IV" 
+      ~ "IV",
+      TRUE ~ NA_character_
+    ),
+    Immune_infiltrate = if_else(condition = (immune_score >= quantile(immune_score, 0.75)),
+                            "High","Low")
+  ) %>%
+  mutate(
+    Age_group   = factor(Age_group,   levels=c("<40","≥40")),
+    Stage_group = factor(Stage_group, levels=c("0/I/II","III","IV")),
+    Immune_infiltrate = factor(Immune_infiltrate, levels = c("Low", "High")),
+    Sex = as.factor(gender)
+  ) %>%
+  dplyr::filter(!is.na(Age_group) & !is.na(Stage_group))
+
 clin_final2$HLA_const <- as.factor(clin_final2$group)
 clin_final2$HLA_const <- relevel(clin_final2$HLA_const, ref = "Low")
 clin_final2$group_DR <- as.factor(clin_final2$group_DR)
@@ -1887,23 +1912,23 @@ ssgsea_group_mean <- ssgsea_scores %*% G_norm   # pathways x groups (mean per gr
 # ---- 2) row z-score of the group means (what you showed) ----
 ssgsea_group_z <- t(scale(t(ssgsea_group_mean)))
 
-undiff_biopsies <- names(which(ssgsea_scores["Melanocytic",] > ssgsea_group_z["Melanocytic",]))
-
-clin_final$undifferentiated <- ifelse(clin_final$sample %in% undiff_biopsies, "Undifferentiated", "Non-Undifferentiated")
-
-fit_cox <- survfit(
-  Surv(DSS.time, DSS) ~ group,
-  rbind(subset(clin_final, undifferentiated == "Non-Undifferentiated" & group == "Low"),
-               subset(clin_final, group == "High"))
-)
-
-# 5) Plot
-ggsurvplot(
-  fit_cox,
-  data       = clin_final,
-  pval       = TRUE,
-  risk.table = TRUE
-)
+# undiff_biopsies <- names(which(ssgsea_scores["Melanocytic",] > ssgsea_group_z["Melanocytic",]))
+# 
+# clin_final$undifferentiated <- ifelse(clin_final$sample %in% undiff_biopsies, "Undifferentiated", "Non-Undifferentiated")
+# 
+# fit_cox <- survfit(
+#   Surv(DSS.time, DSS) ~ group,
+#   rbind(subset(clin_final, undifferentiated == "Non-Undifferentiated" & group == "Low"),
+#                subset(clin_final, group == "High"))
+# )
+# 
+# # 5) Plot
+# ggsurvplot(
+#   fit_cox,
+#   data       = clin_final,
+#   pval       = TRUE,
+#   risk.table = TRUE
+# )
 
 #now let's classify each with one state
 states <- c("Melanocytic","Transitory","Neural_crest-like","Undifferentiated")
@@ -2062,18 +2087,18 @@ ggforest(cox_mod, data=clin_final2)
 ## Univariate analysis
 ```{r CONST+ score and univariate til, fig.width=15, fig.height=8}
 # compute simple singscore
-scores <- simpleScore(rank_data,
+scores_til <- simpleScore(rank_data_til,
                       upSet   = up_list,
                       downSet = down_list)
-rownames(scores) <- gsub(x= rownames(scores), pattern = "\\.", replacement = "-")
-scores$sample <- rownames(scores)
-scores <- subset(scores, sample %in% rownames(TIL_md_full))
+rownames(scores_til) <- gsub(x= rownames(scores_til), pattern = "\\.", replacement = "-")
+scores_til$sample <- rownames(scores_til)
+scores_til <- subset(scores_til, sample %in% rownames(TIL_md_full))
 
-clin_final_TIL <- subset(TIL_md_full, sample %in% scores$sample)
-scores <- scores[order(scores$sample, clin_final_TIL$sample),]
+clin_final_TIL <- subset(TIL_md_full, sample %in% scores_til$sample)
+scores_til <- scores_til[order(scores_til$sample, clin_final_TIL$sample),]
 
-clin_final_TIL$signature_score <- scores$TotalScore[
-  match(clin_final_TIL$sample, scores$sample)
+clin_final_TIL$signature_score <- scores_til$TotalScore[
+  match(clin_final_TIL$sample, scores_til$sample)
 ]
 
 stopifnot(!any(is.na(clin_final_TIL$signature_score)))

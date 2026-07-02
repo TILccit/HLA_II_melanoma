@@ -30,16 +30,18 @@ surv_analysis_tcga <- function(
     library(singscore)
     library(dplyr)
     library(survival)
+    library(biomaRt)
   })
-
+  homedir <- "../.."
   query <- GDCquery(project = project,
                   data.category = "Transcriptome Profiling",
                   data.type     = "Gene Expression Quantification",
                   workflow.type = "STAR - Counts")
-  if(dir.exists(file.path("../controlled_data/GDCdata", project))){
+  
+  if(dir.exists(file.path(homedir,"GDCdata", project))){
     data_se <- GDCprepare(
       query, 
-      directory = "../controlled_data/GDCdata"
+      directory = file.path(homedir,"GDCdata")
     )
   } else {
     GDCdownload(query)
@@ -54,7 +56,7 @@ surv_analysis_tcga <- function(
   rownames(counts) <- sub("\\..*$", "", rownames(counts))
   
   # 4) Retrieve gene lengths (median transcript length per gene) from Ensembl
-  ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl")
+  ensembl <- biomaRt::useEnsembl("ensembl", dataset="hsapiens_gene_ensembl")
   geneAnnot <- getBM(
     attributes = c("ensembl_gene_id", "transcript_length"),
     filters    = "ensembl_gene_id",
@@ -69,7 +71,7 @@ surv_analysis_tcga <- function(
     ungroup()
   
   # match lengths to your count matrix
-  length.kb <- geneLengths$median_length[match(rownames(counts),
+  length.kb <- geneLengths$median_length[base::match(rownames(counts),
                                                geneLengths$ensembl_gene_id)] / 1000
   
   # 5) Create DGEList and calculate normalization factors
@@ -101,9 +103,9 @@ surv_analysis_tcga <- function(
 
   rank_data <- rankGenes(expr_hugo_rcc)
 
-  md <- colData(data_se)
+  md <- clin
   md$sample <- rownames(md)
-  md <- merge(x = clinical_data,y = md, by.x = "bcr_patient_barcode", by.y = "patient")
+  md <- base::merge(x = clin,y = md, by.x = "bcr_patient_barcode", by.y = "patient")
   # compute simple singscore
   scores <- simpleScore(rank_data,
                         upSet   = up_list,
@@ -178,14 +180,85 @@ surv_analysis_tcga <- function(
 }
 ```
 
+# Create signature as in the main script
+```{r}
+library(DESeq2)
+load("../controlled_data/combined_dds.RData")
+#Retrieve DEG genes in HLA high
+HLA_DR_genes <- grep("^HLA-DR", rownames(combined_dds), value = T)
+HLA_DP_genes <- grep("^HLA-DP", rownames(combined_dds), value = T)
+HLA_DQ_genes <- grep("^HLA-DQ", rownames(combined_dds), value = T)
+HLAII_genes <- unique(c("CIITA", HLA_DR_genes, HLA_DP_genes, HLA_DQ_genes))
+
+combined_results_filter_less_strict <- as.data.frame(results(combined_dds, name = "KNN_cluster_HLA_high_vs_HLA_low",cooksCutoff = T)) %>% 
+  dplyr::filter(padj < 0.01 & baseMean >30 & abs(log2FoldChange) > 1.5)
+combined_results_filter_less_strict$gene <- rownames(combined_results_filter_less_strict)
+
+
+immunological_dataset <- read.table("../public/immunological_gene_lists.txt", header = F, sep = "\t",fill = T)
+immunological_dataset <- subset(immunological_dataset, V3 == "GO")
+
+# ensembl <- useEnsembl("ensembl", dataset = "hsapiens_gene_ensembl")
+load("../controlled_data/ensembl.RData") #saved it to ensure it works when ensembl is down
+# 2. Get all genes annotated to immune GO terms
+go_terms <- immunological_dataset$V2
+
+immune_anno <- getBM(
+  attributes = c("hgnc_symbol", "go_id"),  # or "hgnc_symbol"
+  filters    = "go",                              # correct filter name
+  values     = go_terms,
+  mart       = ensembl
+)
+
+
+immune_genes <- unique(immune_anno$hgnc_symbol)
+
+# 3. Filter your own list
+my_genes       <- combined_results_filter_less_strict$gene
+filtered_genes <- setdiff(my_genes, immune_genes)
+
+combined_results_filter_no_immune <- subset(combined_results_filter_less_strict, gene %in% filtered_genes)
+
+# top 15 up
+up15 <- combined_results_filter_no_immune %>%
+  dplyr::filter(baseMean > 800 & log2FoldChange > 2.5) %>%
+ top_n(15, wt = log2FoldChange)
+
+# top 15 *down* (note the negative n)
+down15 <- combined_results_filter_no_immune %>%
+  dplyr::filter(baseMean > 800 & log2FoldChange < -2.5) %>%
+  top_n(-30, wt = log2FoldChange)
+
+# combine
+gene_signature <- dplyr::bind_rows(up15, down15) %>%
+  dplyr::arrange(desc(log2FoldChange))
+gene_signature
+
+#manually pruning immune-genes
+# genes_to_remove <- c("CCL2", "IL24", "CIITA", "CXCL8", "IL1B")
+genes_to_remove <- c("CIITA")
+genes_to_remove_i <- which(rownames(gene_signature) %in% genes_to_remove)
+if (length(genes_to_remove_i) == 0){
+  gene_signature_manually_curated <- gene_signature
+} else {
+  gene_signature_manually_curated <- gene_signature[-genes_to_remove_i,]
+}
+
+
+# define your lists
+up_list   <- rownames(subset(gene_signature_manually_curated, log2FoldChange > 0))
+down_list <- rownames(subset(gene_signature_manually_curated, log2FoldChange < 0))
+```
+
+
 # Assemble the projects results together
 ```{r}
-projects <- paste0("TCGA-", c(
-  "ACC","BLCA","BRCA","CESC","CHOL","COAD","DLBC","ESCA","GBM","HNSC",
-  "KICH","KIRC","KIRP","LAML","LGG","LIHC","LUAD","LUSC","MESO","OV",
-  "PAAD","PCPG","PRAD","READ","SARC","SKCM","STAD","TGCT","THCA","THYM",
-  "UCEC","UCS","UVM"
-))
+# projects <- paste0("TCGA-", c(
+#   "ACC","BLCA","BRCA","CESC","CHOL","COAD","DLBC","ESCA","GBM","HNSC",
+#   "KICH","KIRC","KIRP","LAML","LGG","LIHC","LUAD","LUSC","MESO","OV",
+#   "PAAD","PCPG","PRAD","READ","SARC","SKCM","STAD","TGCT","THCA","THYM",
+#   "UCEC","UCS","UVM"
+# ))
 length(projects)
 
 run_one <- function(prj) {
@@ -210,7 +283,7 @@ cox_tbl <- do.call(rbind, lapply(results_list, function(x) {
 }))
 
 cox_tbl$FDR <- p.adjust(cox_tbl$p, method = "BH")
-cox_tbl <- cox_tbl[order(cox_tbl$FDR, cox_tbl$p), ]
+cox_tbl <- cox_tbl[base::order(cox_tbl$FDR, cox_tbl$p), ]
 cox_tbl
 
 plot_df <- cox_tbl %>%
@@ -257,8 +330,8 @@ ggplot(cox_tbl2, aes(x = HR, y = label)) +
 cox_tbl2$project <- gsub("TCGA-","",cox_tbl2$project)
 
 cox_tbl2p <- cox_tbl2 %>%
-  filter(is.finite(HR), HR > 0, is.finite(LCL), is.finite(UCL)) %>%
-  mutate(
+  dplyr::filter(is.finite(HR), HR > 0, is.finite(LCL), is.finite(UCL)) %>%
+  dplyr::mutate(
     # decreasing HR (largest first)
     project = forcats::fct_reorder(project, HR, .desc = TRUE)
   )
@@ -326,7 +399,7 @@ extract_minimal <- function(obj, project) {
   )
   
   out <- out %>%
-    mutate(
+    dplyr::mutate(
       stage_group = case_when(
         stage %in% c("Stage 0", "I/II NOS", "Stage I","Stage IA","Stage IB",
                      "Stage II","Stage IIA","Stage IIB","Stage IIC") ~ "0/I/II",
@@ -335,8 +408,8 @@ extract_minimal <- function(obj, project) {
         TRUE ~ NA_character_
       )
     ) %>%
-    filter(!is.na(sample), !is.na(signature_score), !is.na(time_days), !is.na(event)) %>%
-    mutate(
+    dplyr::filter(!is.na(sample), !is.na(signature_score), !is.na(time_days), !is.na(event)) %>%
+   dplyr::mutate(
       age_group = if_else(!is.na(age) & (age/365) < 40, "<40", "≥40"),
       time_years = time_days / 365,
       time_years_cens = pmin(time_years, 15),
@@ -497,12 +570,12 @@ plot_df2p <- cox_by_proj %>%
     sig_fdr = !is.na(FDR) & FDR < 0.05
   ) %>%
   # drop rows that can't be plotted on log scale
-  filter(is.finite(HR), HR > 0, is.finite(se), se >= 0) %>%
-  mutate(
+  dplyr::filter(is.finite(HR), HR > 0, is.finite(se), se >= 0) %>%
+  dplyr::mutate(
     lower = exp(log(HR) - 1.96 * se),
     upper = exp(log(HR) + 1.96 * se)
   ) %>%
-  filter(is.finite(lower), is.finite(upper), lower > 0, upper > 0) %>%
+  dplyr::filter(is.finite(lower), is.finite(upper), lower > 0, upper > 0) %>%
   arrange(HR) %>%
   mutate(label_short = factor(label_short, levels = rev(label_short)))
 
